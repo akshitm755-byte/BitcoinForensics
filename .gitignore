@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+node_modules/
+dist/
+generated_dossiers/
+checkpoints/
+.terraform/
+*.tfstate
+*.tfstate.*
+.env

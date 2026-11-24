@@ -1,0 +1,90 @@
+name: CD — Build Microservices & Deploy to GCP Cloud Run
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+  REGION: asia-south1
+  GAR_REPO: abi-forensics-repo
+  VAULT_BUCKET: ${{ secrets.GCP_PROJECT_ID }}-abi-vault
+
+jobs:
+  test-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Test Dependencies
+        run: |
+          pip install --extra-index-url https://download.pytorch.org/whl/cpu torch==2.3.1+cpu
+          pip install pydantic networkx numpy pandas matplotlib reportlab fastapi httpx pytest
+          pip install -e ./contracts
+      - name: Run Leakage & Contract Gate
+        run: pytest tests/test_pipeline_and_model.py -v
+
+  build-and-deploy:
+    needs: test-gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: "read"
+      id-token: "write"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud (Keyless WIF)
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SA_EMAIL }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: Build & Push Microservice Images (Tag = ${{ github.sha }})
+        run: |
+          REGISTRY="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.GAR_REPO }}"
+          TAG="${{ github.sha }}"
+
+          docker build -t "${REGISTRY}/mod2-gnn:${TAG}" -f module2_detection_gnn/Dockerfile .
+          docker push "${REGISTRY}/mod2-gnn:${TAG}"
+
+          docker build -t "${REGISTRY}/mod3-agents:${TAG}" -f module3_reporting_agents/Dockerfile .
+          docker push "${REGISTRY}/mod3-agents:${TAG}"
+
+          docker build -t "${REGISTRY}/mod4-runtime:${TAG}" -f module4_runtime_ui/Dockerfile .
+          docker push "${REGISTRY}/mod4-runtime:${TAG}"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init & Apply
+        id: tf
+        working-directory: ./infra
+        run: |
+          terraform init -backend-config="bucket=${{ env.TF_STATE_BUCKET }}"
+          terraform apply -auto-approve \
+            -var="project_id=${{ env.PROJECT_ID }}" \
+            -var="region=${{ env.REGION }}" \
+            -var="vault_bucket=${{ env.VAULT_BUCKET }}" \
+            -var="image_tag=${{ github.sha }}"
+          echo "dashboard_url=$(terraform output -raw investigator_dashboard_url)" >> $GITHUB_OUTPUT
+          echo "gnn_url=$(terraform output -raw gnn_service_url)" >> $GITHUB_OUTPUT
+          echo "agents_url=$(terraform output -raw reporting_agents_url)" >> $GITHUB_OUTPUT
+
+      - name: Publish Live Cloud Run URLs to Job Summary
+        run: |
+          echo "## Deployment Complete (GCP Cloud Run)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Investigator Forensics Dashboard & API:** ${{ steps.tf.outputs.dashboard_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Module 2 (Temporal Bit-CHetG GNN):** ${{ steps.tf.outputs.gnn_url }}/docs" >> $GITHUB_STEP_SUMMARY
+          echo "- **Module 3 (GNNExplainer + Agents + PDF):** ${{ steps.tf.outputs.agents_url }}/docs" >> $GITHUB_STEP_SUMMARY
