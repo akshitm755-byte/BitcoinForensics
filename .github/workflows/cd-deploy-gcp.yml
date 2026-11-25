@@ -1,4 +1,4 @@
-name: CD — Build Microservices & Deploy to GCP Cloud Run
+name: CD — Build & Deploy ABI v3 Microservices to GCP Cloud Run
 
 on:
   push:
@@ -25,8 +25,8 @@ jobs:
           pip install --extra-index-url https://download.pytorch.org/whl/cpu torch==2.3.1+cpu
           pip install pydantic networkx numpy pandas matplotlib reportlab fastapi httpx pytest
           pip install -e ./contracts
-      - name: Run Leakage & Contract Gate
-        run: pytest tests/test_pipeline_and_model.py -v
+      - name: Run Leakage, In-Graph Memory & Dossier Gate
+        run: pytest tests/test_v3_full_pipeline.py -v
 
   build-and-deploy:
     needs: test-gate
@@ -39,7 +39,6 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Authenticate to Google Cloud (Keyless WIF)
-        id: auth
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
@@ -51,7 +50,7 @@ jobs:
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
 
-      - name: Build & Push Microservice Images (Tag = ${{ github.sha }})
+      - name: Build & Push v3 Microservices
         run: |
           REGISTRY="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.GAR_REPO }}"
           TAG="${{ github.sha }}"
@@ -77,14 +76,15 @@ jobs:
             -var="project_id=${{ env.PROJECT_ID }}" \
             -var="region=${{ env.REGION }}" \
             -var="vault_bucket=${{ env.VAULT_BUCKET }}" \
-            -var="image_tag=${{ github.sha }}"
+            -var="image_tag=${{ github.sha }}" \
+            -var="gemini_api_key=${{ secrets.GEMINI_API_KEY }}"
           echo "dashboard_url=$(terraform output -raw investigator_dashboard_url)" >> $GITHUB_OUTPUT
           echo "gnn_url=$(terraform output -raw gnn_service_url)" >> $GITHUB_OUTPUT
           echo "agents_url=$(terraform output -raw reporting_agents_url)" >> $GITHUB_OUTPUT
 
-      - name: Publish Live Cloud Run URLs to Job Summary
+      - name: Publish Live Cloud Run URLs
         run: |
-          echo "## Deployment Complete (GCP Cloud Run)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Investigator Forensics Dashboard & API:** ${{ steps.tf.outputs.dashboard_url }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Module 2 (Temporal Bit-CHetG GNN):** ${{ steps.tf.outputs.gnn_url }}/docs" >> $GITHUB_STEP_SUMMARY
-          echo "- **Module 3 (GNNExplainer + Agents + PDF):** ${{ steps.tf.outputs.agents_url }}/docs" >> $GITHUB_STEP_SUMMARY
+          echo "## ABI v3 Deployed to GCP Cloud Run" >> $GITHUB_STEP_SUMMARY
+          echo "- **Investigator Forensics Dashboard:** ${{ steps.tf.outputs.dashboard_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Module 2 (Bit-CHetG + Amatriciana + In-Graph Memory):** ${{ steps.tf.outputs.gnn_url }}/docs" >> $GITHUB_STEP_SUMMARY
+          echo "- **Module 3 (GNNExplainer + OSINT Scraper + RAG + PDF):** ${{ steps.tf.outputs.agents_url }}/docs" >> $GITHUB_STEP_SUMMARY

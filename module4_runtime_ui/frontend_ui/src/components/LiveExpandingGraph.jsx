@@ -1,17 +1,30 @@
 import React, { useEffect, useRef, useState } from "react";
+import FeatureInsightWindow from "./FeatureInsightWindow";
 
 /**
- * Bureau-Grade Continuous Expanding Temporal Graph:
- * - New subgraph generations sprout radially outward from parent perimeter nodes.
- * - Older generations progressively dim and fade out cleanly rather than vanishing abruptly.
- * - GNNExplainer minimal nodes & edges pulse crimson; clicking a claim highlights its exact refs.
+ * Dynamic, Interactable Forensics Graph Topology:
+ * - Supports "Live Interlaced Stream" (sprout & fade) OR "Alert Subgraph Focus" mode.
+ * - Clickable nodes & edges open the Timestamped Feature Insight Window.
+ * - Smooth drag-to-reposition nodes + zoom in/out/reset controls.
  */
-export default function LiveExpandingGraph({ incomingBatch, evidenceMask, highlightedRefs = [] }) {
+export default function LiveExpandingGraph({
+  incomingBatch,
+  focusedAlert,
+  evidenceMask,
+  highlightedRefs = [],
+  baselines = {},
+}) {
+  const [viewMode, setViewMode] = useState("live"); // "live" | "alert"
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
   const [generation, setGeneration] = useState(0);
+  const [selectedItem, setSelectedItem] = useState(null);
+  const [zoom, setZoom] = useState(1.0);
+  const [draggingId, setDraggingId] = useState(null);
+  const svgRef = useRef(null);
   const lastBatchIdRef = useRef(null);
 
+  // Switch automatically to live updates when incomingBatch arrives in live mode
   useEffect(() => {
     if (!incomingBatch || incomingBatch.batch_id === lastBatchIdRef.current) return;
     lastBatchIdRef.current = incomingBatch.batch_id;
@@ -30,100 +43,212 @@ export default function LiveExpandingGraph({ incomingBatch, evidenceMask, highli
             ? (map.has(parentEdge.source_id) ? parentEdge.source_id : parentEdge.target_id)
             : null;
           const parent = parentId ? map.get(parentId) : null;
-          const angle = ((nextGen * 47 + idx * 137.5) * Math.PI) / 180;
-          const radius = parent ? 68 : 110;
-          const cx = parent ? parent.x : 380;
-          const cy = parent ? parent.y : 250;
+          const angle = ((nextGen * 53 + idx * 137.5) * Math.PI) / 180;
+          const radius = parent ? 76 : 125;
+          const cx = parent ? parent.x : 390;
+          const cy = parent ? parent.y : 260;
 
           map.set(n.node_id, {
             ...n,
             bornGen: nextGen,
-            x: Math.max(40, Math.min(720, cx + Math.cos(angle) * radius)),
-            y: Math.max(40, Math.min(460, cy + Math.sin(angle) * radius)),
+            x: Math.max(48, Math.min(732, cx + Math.cos(angle) * radius)),
+            y: Math.max(48, Math.min(472, cy + Math.sin(angle) * radius)),
           });
         } else {
-          // Refresh generation slightly if node is actively participating again
-          map.set(n.node_id, { ...map.get(n.node_id), bornGen: nextGen });
+          const old = map.get(n.node_id);
+          map.set(n.node_id, { ...old, ...n, bornGen: nextGen, x: old.x, y: old.y });
         }
       });
-      return Array.from(map.values()).filter((n) => nextGen - n.bornGen <= 6);
+      return Array.from(map.values()).filter((n) => nextGen - n.bornGen <= 7);
     });
 
     setEdges((prev) => {
       const map = new Map(prev.map((e) => [e.edge_id, e]));
-      incomingBatch.edges.forEach((e) => {
-        map.set(e.edge_id, { ...e, bornGen: nextGen });
-      });
-      return Array.from(map.values()).filter((e) => nextGen - e.bornGen <= 6);
+      incomingBatch.edges.forEach((e) => map.set(e.edge_id, { ...e, bornGen: nextGen }));
+      return Array.from(map.values()).filter((e) => nextGen - e.bornGen <= 7);
     });
   }, [incomingBatch]);
 
+  // Compute radial layout for focused alert subgraph
+  const displayNodes = React.useMemo(() => {
+    if (viewMode === "alert" && focusedAlert) {
+      const sub = focusedAlert.subgraph_nodes || [];
+      return sub.map((n, idx) => {
+        const ring = n.node_type === "transaction" ? 95 : 185;
+        const angle = (2 * Math.PI * idx) / Math.max(1, sub.length);
+        return {
+          ...n,
+          bornGen: generation,
+          x: 390 + Math.cos(angle) * ring,
+          y: 260 + Math.sin(angle) * ring,
+        };
+      });
+    }
+    return nodes;
+  }, [viewMode, focusedAlert, nodes, generation]);
+
+  const displayEdges = viewMode === "alert" && focusedAlert ? (focusedAlert.subgraph_edges || []) : edges;
   const minNodes = new Set(evidenceMask?.minimal_nodes || []);
   const minEdges = new Set(evidenceMask?.minimal_edges || []);
   const claimRefs = new Set(highlightedRefs || []);
-  const lookup = Object.fromEntries(nodes.map((n) => [n.node_id, n]));
+  const lookup = Object.fromEntries(displayNodes.map((n) => [n.node_id, n]));
+
+  const handleSvgMouseMove = (e) => {
+    if (!draggingId || viewMode !== "live" || !svgRef.current) return;
+    const rect = svgRef.current.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) * 780;
+    const y = ((e.clientY - rect.top) / rect.height) * 520;
+    setNodes((prev) => prev.map((n) => (n.node_id === draggingId ? { ...n, x, y } : n)));
+  };
 
   return (
-    <div style={{ background: "#090f1d", border: "1px solid #1e293b", borderRadius: 10, padding: 12 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#94a3b8", fontFamily: "monospace", marginBottom: 8 }}>
-        <span>TEMPORAL HETEROGENEOUS GRAPH // GEN #{generation} // ACTIVE NODES: {nodes.length}</span>
-        <span>
-          <span style={{ color: "#ef4444" }}>● GNNExplainer Minimal</span> &nbsp;
-          <span style={{ color: "#38bdf8" }}>● Transaction</span> &nbsp;
-          <span style={{ color: "#a855f7" }}>● Wallet Address</span>
-        </span>
+    <div
+      style={{
+        position: "relative",
+        background: "#11141c",
+        border: "1px solid #1e232e",
+        borderRadius: 12,
+        padding: 14,
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <button
+            onClick={() => setViewMode("live")}
+            style={{
+              background: viewMode === "live" ? "#1e293b" : "transparent",
+              color: viewMode === "live" ? "#f8fafc" : "#64748b",
+              border: "1px solid #262b36", borderRadius: 6, padding: "4px 10px", fontSize: 11.5, fontWeight: 500, cursor: "pointer",
+            }}
+          >
+            Live Interlaced Stream
+          </button>
+          <button
+            disabled={!focusedAlert}
+            onClick={() => setViewMode("alert")}
+            style={{
+              background: viewMode === "alert" ? "#1e293b" : "transparent",
+              color: !focusedAlert ? "#334155" : viewMode === "alert" ? "#f8fafc" : "#64748b",
+              border: "1px solid #262b36", borderRadius: 6, padding: "4px 10px", fontSize: 11.5, fontWeight: 500,
+              cursor: focusedAlert ? "pointer" : "not-allowed",
+            }}
+          >
+            Focused Alert Topology {focusedAlert ? `(${focusedAlert.alert_id})` : ""}
+          </button>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 11, color: "#94a3b8", fontFamily: "'JetBrains Mono', monospace" }}>
+          <span>GEN #{generation}</span>
+          <div style={{ display: "flex", gap: 4 }}>
+            <button onClick={() => setZoom((z) => Math.min(1.6, +(z + 0.15).toFixed(2)))} style={{ background: "#181c26", color: "#cbd5e1", border: "1px solid #262b36", borderRadius: 5, width: 24, height: 22, cursor: "pointer" }}>+</button>
+            <button onClick={() => setZoom((z) => Math.max(0.7, +(z - 0.15).toFixed(2)))} style={{ background: "#181c26", color: "#cbd5e1", border: "1px solid #262b36", borderRadius: 5, width: 24, height: 22, cursor: "pointer" }}>−</button>
+            <button onClick={() => setZoom(1.0)} style={{ background: "#181c26", color: "#cbd5e1", border: "1px solid #262b36", borderRadius: 5, padding: "0 6px", height: 22, fontSize: 10, cursor: "pointer" }}>1:1</button>
+          </div>
+        </div>
       </div>
-      <svg viewBox="0 0 760 500" style={{ width: "100%", height: 470, background: "#050811", borderRadius: 6 }}>
+
+      <svg
+        ref={svgRef}
+        viewBox="0 0 780 520"
+        onMouseMove={handleSvgMouseMove}
+        onMouseUp={() => setDraggingId(null)}
+        onMouseLeave={() => setDraggingId(null)}
+        style={{ width: "100%", height: 500, background: "#0a0c10", borderRadius: 8, border: "1px solid #181c26", userSelect: "none" }}
+      >
         <defs>
-          <radialGradient id="crimsonHalo">
-            <stop offset="0%" stopColor="rgba(239,68,68,0.55)" />
-            <stop offset="100%" stopColor="rgba(239,68,68,0)" />
+          <radialGradient id="flagGlow">
+            <stop offset="0%" stopColor="rgba(244,63,94,0.45)" />
+            <stop offset="100%" stopColor="rgba(244,63,94,0)" />
           </radialGradient>
         </defs>
-        {edges.map((e) => {
-          const src = lookup[e.source_id];
-          const dst = lookup[e.target_id];
-          if (!src || !dst) return null;
-          const age = Math.max(0, generation - e.bornGen);
-          const isClaimRef = claimRefs.has(e.edge_id);
-          const isFlagged = minEdges.has(e.edge_id);
-          const opacity = isFlagged || isClaimRef ? 0.95 : Math.max(0.12, 0.85 - age * 0.14);
-          return (
-            <line
-              key={e.edge_id}
-              x1={src.x}
-              y1={src.y}
-              x2={dst.x}
-              y2={dst.y}
-              stroke={isClaimRef ? "#facc15" : isFlagged ? "#ef4444" : "#334155"}
-              strokeWidth={isClaimRef ? 3.4 : isFlagged ? 2.4 : 1.1}
-              strokeOpacity={opacity}
-            />
-          );
-        })}
-        {nodes.map((n) => {
-          const age = Math.max(0, generation - n.bornGen);
-          const isClaimRef = claimRefs.has(n.node_id);
-          const isFlagged = minNodes.has(n.node_id);
-          const opacity = isFlagged || isClaimRef ? 1.0 : Math.max(0.14, 0.92 - age * 0.14);
-          const fill = isClaimRef
-            ? "#facc15"
-            : isFlagged
-            ? "#ef4444"
-            : n.node_type === "transaction"
-            ? "#38bdf8"
-            : "#a855f7";
-          return (
-            <g key={n.node_id} transform={`translate(${n.x}, ${n.y})`} style={{ opacity, transition: "opacity 0.5s ease" }}>
-              {(isFlagged || isClaimRef) && <circle r={18} fill="url(#crimsonHalo)" />}
-              <circle r={isFlagged || isClaimRef ? 7.5 : 5} fill={fill} stroke="#f8fafc" strokeWidth={1.1} />
-              <text x={10} y={3} fill="#cbd5e1" fontSize="9" fontFamily="monospace">
-                {n.node_id.length > 18 ? n.node_id.slice(0, 17) + "…" : n.node_id}
-              </text>
-            </g>
-          );
-        })}
+
+        <g transform={`translate(${390 * (1 - zoom)}, ${260 * (1 - zoom)}) scale(${zoom})`}>
+          {displayEdges.map((e) => {
+            const src = lookup[e.source_id];
+            const dst = lookup[e.target_id];
+            if (!src || !dst) return null;
+            const age = viewMode === "alert" ? 0 : Math.max(0, generation - (e.bornGen ?? generation));
+            const isClaim = claimRefs.has(e.edge_id);
+            const isFlag = minEdges.has(e.edge_id);
+            const isSel = selectedItem?.kind === "edge" && selectedItem.data.edge_id === e.edge_id;
+            const opacity = isFlag || isClaim || isSel ? 0.96 : Math.max(0.14, 0.85 - age * 0.12);
+            return (
+              <g
+                key={e.edge_id}
+                style={{ cursor: "pointer" }}
+                onClick={() => setSelectedItem({ kind: "edge", data: e })}
+              >
+                {/* Invisible wider hit target so clicking edges is effortless */}
+                <line x1={src.x} y1={src.y} x2={dst.x} y2={dst.y} stroke="transparent" strokeWidth={12} />
+                <line
+                  x1={src.x}
+                  y1={src.y}
+                  x2={dst.x}
+                  y2={dst.y}
+                  stroke={isSel ? "#ffffff" : isClaim ? "#fbbf24" : isFlag ? "#f43f5e" : "#334155"}
+                  strokeWidth={isSel || isClaim ? 3.2 : isFlag ? 2.2 : 1.15}
+                  strokeOpacity={opacity}
+                />
+              </g>
+            );
+          })}
+
+          {displayNodes.map((n) => {
+            const age = viewMode === "alert" ? 0 : Math.max(0, generation - (n.bornGen ?? generation));
+            const isClaim = claimRefs.has(n.node_id);
+            const isFlag = minNodes.has(n.node_id);
+            const isSel = selectedItem?.kind === "node" && selectedItem.data.node_id === n.node_id;
+            const opacity = isFlag || isClaim || isSel ? 1.0 : Math.max(0.16, 0.94 - age * 0.12);
+            const fill = isClaim
+              ? "#fbbf24"
+              : isFlag
+              ? "#f43f5e"
+              : n.node_type === "transaction"
+              ? "#38bdf8"
+              : "#a78bfa";
+
+            return (
+              <g
+                key={n.node_id}
+                transform={`translate(${n.x}, ${n.y})`}
+                style={{ cursor: "pointer", opacity, transition: "opacity 0.45s ease" }}
+                onMouseDown={() => viewMode === "live" && setDraggingId(n.node_id)}
+                onClick={(ev) => {
+                  ev.stopPropagation();
+                  setSelectedItem({ kind: "node", data: n });
+                }}
+              >
+                {(isFlag || isClaim || isSel) && <circle r={18} fill="url(#flagGlow)" />}
+                <circle
+                  r={isSel ? 8.5 : isFlag || isClaim ? 7 : 5}
+                  fill={fill}
+                  stroke={isSel ? "#ffffff" : "#e2e8f0"}
+                  strokeWidth={isSel ? 2.2 : 1.0}
+                />
+                <text x={10} y={3.5} fill="#cbd5e1" fontSize="8.8" fontFamily="'JetBrains Mono', monospace">
+                  {n.node_id.length > 18 ? n.node_id.slice(0, 17) + "…" : n.node_id}
+                </text>
+              </g>
+            );
+          })}
+        </g>
       </svg>
+
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: "#64748b", marginTop: 8 }}>
+        <span>Click any node or edge to open its timestamped feature insight profile. Drag nodes in Live mode to inspect.</span>
+        <span style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+          <span style={{ color: "#f43f5e" }}>● Explainer</span> &nbsp;
+          <span style={{ color: "#38bdf8" }}>● Tx</span> &nbsp;
+          <span style={{ color: "#a78bfa" }}>● Wallet</span>
+        </span>
+      </div>
+
+      <FeatureInsightWindow
+        item={selectedItem}
+        evidenceMask={evidenceMask}
+        baselines={baselines}
+        onClose={() => setSelectedItem(null)}
+      />
     </div>
   );
 }

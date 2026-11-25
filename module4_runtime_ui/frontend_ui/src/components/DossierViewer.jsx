@@ -3,33 +3,39 @@ import React from "react";
 export default function DossierViewer({ detail, selectedClaimId, onSelectClaim, onToggleFP }) {
   if (!detail) {
     return (
-      <div style={{ background: "#090f1d", border: "1px solid #1e293b", borderRadius: 10, padding: 16, color: "#64748b", fontSize: 13 }}>
-        Select a flagged alert from the queue—or inject a laundering typology—to inspect its GNNExplainer evidence artifact, provenance-linked claims, and downloadable PDF dossier.
+      <div style={{ background: "#11141c", border: "1px solid #1e232e", borderRadius: 12, padding: 20, color: "#64748b", fontSize: 13, lineHeight: 1.6 }}>
+        Select a flagged case from the alert queue—or inject an interlaced laundering campaign—to inspect its PyTorch GNNExplainer masks, OSINT historic case similarity index, and downloadable forensic PDF dossier.
       </div>
     );
   }
 
   const { alert, report, audit_trace } = detail;
+  const topCase = report?.evidence?.historic_case_matches?.[0];
 
   return (
-    <div style={{ background: "#090f1d", border: "1px solid #1e293b", borderRadius: 10, padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+    <div style={{ background: "#11141c", border: "1px solid #1e232e", borderRadius: 12, padding: 16, display: "flex", flexDirection: "column", gap: 14, maxHeight: 595, overflowY: "auto" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
         <div>
-          <div style={{ fontSize: 11, color: "#94a3b8", fontFamily: "monospace" }}>CASE FILE // {alert.alert_id}</div>
-          <div style={{ fontSize: 16, fontWeight: 700, color: "#f8fafc" }}>
-            {alert.predicted_typology.replace(/_/g, " ").toUpperCase()} ({(alert.risk_score * 100).toFixed(1)}%)
+          <div style={{ fontSize: 10.5, color: "#64748b", fontFamily: "'JetBrains Mono', monospace" }}>
+            CASE // {alert.alert_id} · MOTIF SLOT #{alert.matched_motif_slot}
+          </div>
+          <div style={{ fontSize: 16, fontWeight: 600, color: "#f8fafc", marginTop: 2 }}>
+            {alert.predicted_typology.replace(/_/g, " ").toUpperCase()}{" "}
+            <span style={{ color: "#fb7185", fontFamily: "'JetBrains Mono', monospace", fontSize: 14 }}>
+              {(alert.risk_score * 100).toFixed(1)}%
+            </span>
           </div>
         </div>
         <div style={{ display: "flex", gap: 6 }}>
           <button
             onClick={() => onToggleFP(alert.alert_id)}
             style={{
-              background: alert.is_false_positive ? "#854d0e" : "#1e293b",
-              color: "#f8fafc", border: "1px solid #334155", borderRadius: 6,
-              padding: "6px 10px", fontSize: 11, cursor: "pointer",
+              background: alert.is_false_positive ? "rgba(234,179,8,0.18)" : "#181c26",
+              color: alert.is_false_positive ? "#fde047" : "#cbd5e1",
+              border: "1px solid #262b36", borderRadius: 6, padding: "6px 9px", fontSize: 11, cursor: "pointer",
             }}
           >
-            {alert.is_false_positive ? "Marked False Positive" : "Mark False Positive"}
+            {alert.is_false_positive ? "False Positive" : "Flag FP"}
           </button>
           {report && (
             <a
@@ -37,33 +43,53 @@ export default function DossierViewer({ detail, selectedClaimId, onSelectClaim, 
               target="_blank"
               rel="noreferrer"
               style={{
-                background: "#2563eb", color: "#fff", borderRadius: 6,
-                padding: "6px 12px", fontSize: 11, fontWeight: 600, textDecoration: "none",
+                background: "#f8fafc", color: "#0a0c10", borderRadius: 6,
+                padding: "6px 11px", fontSize: 11, fontWeight: 600, textDecoration: "none",
               }}
             >
-              Download .PDF Dossier
+              Export .PDF
             </a>
           )}
         </div>
       </div>
 
       {!report ? (
-        <div style={{ fontSize: 12, color: "#38bdf8", fontFamily: "monospace" }}>
-          Running PyTorch GNNExplainer + OSINT RAG + Compliance Critic loop...
+        <div style={{ fontSize: 12, color: "#38bdf8", fontFamily: "'JetBrains Mono', monospace", padding: "12px 0" }}>
+          Running PyTorch GNNExplainer + OSINT Historic Cases Scraper + Compliance Critic...
         </div>
       ) : (
         <>
-          <div style={{ display: "flex", gap: 12, fontSize: 11, fontFamily: "monospace", background: "#0f172a", padding: "8px 10px", borderRadius: 6 }}>
-            <span>VERDICT: <strong style={{ color: "#22c55e" }}>{report.critic_verdict}</strong></span>
-            <span>FAITHFULNESS: <strong style={{ color: "#38bdf8" }}>{(report.faithfulness_score * 100).toFixed(1)}%</strong></span>
-            <span>OSINT: <strong style={{ color: report.evidence.attribution_available ? "#f59e0b" : "#94a3b8" }}>
-              {report.evidence.attribution_available ? "MATCHED" : "ANONYMIZED"}
-            </strong></span>
+          {/* Historic Case Precedent Highlight Card */}
+          {topCase && (
+            <div style={{ background: "#0a0c10", border: "1px solid #1e232e", borderRadius: 8, padding: "10px 12px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                <span style={{ fontSize: 10, color: "#94a3b8", fontFamily: "'JetBrains Mono', monospace" }}>
+                  OSINT PRECEDENT MATCH ({topCase.source_domain})
+                </span>
+                <span style={{ fontSize: 11, fontWeight: 600, fontFamily: "'JetBrains Mono', monospace", color: "#38bdf8" }}>
+                  SIM {topCase.similarity_index.toFixed(2)} · ESC {(topCase.escalation_rate * 100).toFixed(0)}%
+                </span>
+              </div>
+              <div style={{ fontSize: 12.5, fontWeight: 600, color: "#f1f5f9" }}>
+                {topCase.case_name} ({topCase.year})
+              </div>
+              <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 3, lineHeight: 1.45 }}>
+                {topCase.temporal_spacing_pattern} · <span style={{ color: "#cbd5e1" }}>{topCase.pseudorandomization_signature}</span>
+              </div>
+            </div>
+          )}
+
+          {/* Compliance Strip */}
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, fontFamily: "'JetBrains Mono', monospace", color: "#94a3b8", padding: "6px 10px", background: "#0a0c10", borderRadius: 6, border: "1px solid #1e232e" }}>
+            <span>CRITIC: <strong style={{ color: "#4ade80" }}>{report.critic_verdict}</strong></span>
+            <span>FAITHFUL: <strong style={{ color: "#38bdf8" }}>{(report.faithfulness_score * 100).toFixed(0)}%</strong></span>
+            <span>ENGINE: <strong>{report.narrative_engine.split(":")[0].toUpperCase()}</strong></span>
           </div>
 
+          {/* Grounded Claims */}
           <div>
-            <div style={{ fontSize: 11, color: "#94a3b8", fontFamily: "monospace", marginBottom: 6 }}>
-              GROUNDED CLAIMS (CLICK TO HIGHLIGHT PROVENANCE ON LIVE GRAPH)
+            <div style={{ fontSize: 10, color: "#64748b", fontFamily: "'JetBrains Mono', monospace", marginBottom: 6 }}>
+              GROUNDED INVESTIGATIVE CLAIMS (CLICK TO HIGHLIGHT ON GRAPH)
             </div>
             {report.claims.map((c) => {
               const active = selectedClaimId === c.claim_id;
@@ -72,45 +98,49 @@ export default function DossierViewer({ detail, selectedClaimId, onSelectClaim, 
                   key={c.claim_id}
                   onClick={() => onSelectClaim(active ? null : c)}
                   style={{
-                    padding: 10, marginBottom: 6, borderRadius: 6, cursor: "pointer", fontSize: 12.5, lineHeight: 1.45,
-                    background: active ? "#1e3a8a" : "#0f172a",
-                    borderLeft: c.is_grounded ? "3px solid #22c55e" : "3px solid #ef4444",
+                    padding: "9px 11px", marginBottom: 6, borderRadius: 7, cursor: "pointer",
+                    fontSize: 12, lineHeight: 1.5, color: "#e2e8f0",
+                    background: active ? "rgba(56,189,248,0.12)" : "#0a0c10",
+                    border: `1px solid ${active ? "rgba(56,189,248,0.5)" : "#1e232e"}`,
+                    borderLeft: `3px solid ${c.is_grounded ? "#22c55e" : "#f43f5e"}`,
                   }}
                 >
                   <div>{c.sentence}</div>
-                  <div style={{ marginTop: 4, fontSize: 10.5, color: "#93c5fd", fontFamily: "monospace" }}>
-                    Citations: {c.evidence_refs.join(" · ")}
+                  <div style={{ marginTop: 4, fontSize: 10, color: "#64748b", fontFamily: "'JetBrains Mono', monospace" }}>
+                    {c.evidence_refs.join(" · ")}
                   </div>
                 </div>
               );
             })}
           </div>
 
+          {/* Feature Attributions */}
           <div>
-            <div style={{ fontSize: 11, color: "#94a3b8", fontFamily: "monospace", marginBottom: 6 }}>
-              FEATURE ATTRIBUTIONS (GNNEXPLAINER)
+            <div style={{ fontSize: 10, color: "#64748b", fontFamily: "'JetBrains Mono', monospace", marginBottom: 6 }}>
+              GNNEXPLAINER FEATURE ATTRIBUTIONS
             </div>
             {Object.entries(report.evidence.feature_attributions)
               .sort((a, b) => b[1] - a[1])
               .slice(0, 5)
               .map(([k, v]) => (
-                <div key={k} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, fontSize: 11 }}>
-                  <span style={{ width: 130, fontFamily: "monospace", color: "#cbd5e1" }}>{k.replace("feat:", "")}</span>
-                  <div style={{ flex: 1, height: 6, background: "#1e293b", borderRadius: 3 }}>
-                    <div style={{ width: `${Math.min(100, v * 220)}%`, height: "100%", background: "#38bdf8", borderRadius: 3 }} />
+                <div key={k} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5, fontSize: 11 }}>
+                  <span style={{ width: 122, fontFamily: "'JetBrains Mono', monospace", color: "#94a3b8" }}>{k.replace("feat:", "")}</span>
+                  <div style={{ flex: 1, height: 5, background: "#181c26", borderRadius: 3 }}>
+                    <div style={{ width: `${Math.min(100, v * 230)}%`, height: "100%", background: "#38bdf8", borderRadius: 3 }} />
                   </div>
-                  <span style={{ width: 38, textAlign: "right", fontFamily: "monospace" }}>{(v * 100).toFixed(1)}%</span>
+                  <span style={{ width: 36, textAlign: "right", fontFamily: "'JetBrains Mono', monospace", color: "#e2e8f0" }}>{(v * 100).toFixed(0)}%</span>
                 </div>
               ))}
           </div>
 
+          {/* Audit Hash Log */}
           <div>
-            <div style={{ fontSize: 11, color: "#94a3b8", fontFamily: "monospace", marginBottom: 4 }}>
-              TAMPER-EVIDENT AUDIT TRACE (SHA-256)
+            <div style={{ fontSize: 10, color: "#64748b", fontFamily: "'JetBrains Mono', monospace", marginBottom: 4 }}>
+              SHA-256 PROVENANCE AUDIT TRAIL
             </div>
-            <div style={{ maxHeight: 85, overflowY: "auto", fontSize: 10, fontFamily: "monospace", color: "#64748b", background: "#050811", padding: 8, borderRadius: 6 }}>
+            <div style={{ fontSize: 9.5, fontFamily: "'JetBrains Mono', monospace", color: "#64748b", background: "#0a0c10", padding: 8, borderRadius: 6, border: "1px solid #1e232e" }}>
               {audit_trace.map((t, i) => (
-                <div key={i}>{t.stage} :: {t.sha256_hash.slice(0, 28)}…</div>
+                <div key={i}>{t.stage} :: {t.sha256_hash.slice(0, 32)}…</div>
               ))}
             </div>
           </div>

@@ -1,4 +1,3 @@
-# Stage 1: Build Bureau-Grade React Forensics Dashboard
 FROM node:20-alpine AS ui-builder
 WORKDIR /ui
 COPY module4_runtime_ui/frontend_ui/package.json ./
@@ -6,7 +5,6 @@ RUN npm install
 COPY module4_runtime_ui/frontend_ui/ ./
 RUN npm run build
 
-# Stage 2: FastAPI Runtime, Live AMLSim Streamer, Audit Logger & Static UI Host
 FROM python:3.11-slim
 WORKDIR /app
 ENV PIP_DEFAULT_TIMEOUT=120 PIP_RETRIES=5

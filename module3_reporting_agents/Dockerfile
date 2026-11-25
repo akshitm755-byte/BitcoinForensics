@@ -4,7 +4,6 @@ ENV PIP_DEFAULT_TIMEOUT=120 PIP_RETRIES=5 MPLBACKEND=Agg
 
 COPY contracts /app/contracts
 RUN pip install --no-cache-dir -e /app/contracts
-
 RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu torch==2.3.1+cpu
 
 COPY module3_reporting_agents/requirements.txt .

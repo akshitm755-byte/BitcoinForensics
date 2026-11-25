@@ -1,3 +1,4 @@
+import math
 import os
 from typing import Dict, List, Optional, Tuple
 import torch
@@ -7,18 +8,24 @@ from contracts.schemas import Node, Edge, NodeType, Typology, IDX_TO_TYPOLOGY, F
 from module1_data_pipeline.src.features import ExplicitFeatureBuilder
 
 
-class HeteroSAGEBlock(nn.Module):
+class HeteroMemorySAGEBlock(nn.Module):
     """
-    Pure-PyTorch heterogeneous SAGE message-passing block (Bit-CHetG style).
-    Separately aggregates Transaction-Subgraph Embeddings (TSE) and Address-Feature Aggregations (AFA)
-    with optional differentiable edge & node masks for PyTorch GNNExplainer.
+    Bit-CHetG heterogeneous SAGE block upgraded with In-Graph Neighborhood Memory Reading:
+    During message passing, each node aggregates both its neighbors' current features AND
+    their stored temporal memory vectors (`prev_mem`) via a learned memory gate—allowing brand-new
+    transactions in an interlaced laundering campaign to inherit relational history immediately!
     """
     def __init__(self, hidden_dim: int):
         super().__init__()
         self.lin_self_tx = nn.Linear(hidden_dim, hidden_dim)
         self.lin_nbr_tx = nn.Linear(hidden_dim, hidden_dim)
+        self.lin_mem_tx = nn.Linear(hidden_dim, hidden_dim)
+
         self.lin_self_addr = nn.Linear(hidden_dim, hidden_dim)
         self.lin_nbr_addr = nn.Linear(hidden_dim, hidden_dim)
+        self.lin_mem_addr = nn.Linear(hidden_dim, hidden_dim)
+
+        self.mem_gate = nn.Linear(hidden_dim * 2, hidden_dim)
         self.norm_tx = nn.LayerNorm(hidden_dim)
         self.norm_addr = nn.LayerNorm(hidden_dim)
 
@@ -27,7 +34,9 @@ class HeteroSAGEBlock(nn.Module):
         h: torch.Tensor,
         node_is_tx: torch.Tensor,
         edge_index: torch.Tensor,
+        neighbor_mem: Optional[torch.Tensor] = None,
         edge_weight: Optional[torch.Tensor] = None,
+        enable_in_graph_memory: bool = True,
     ) -> torch.Tensor:
         num_nodes, d = h.shape
         device = h.device
@@ -35,31 +44,66 @@ class HeteroSAGEBlock(nn.Module):
         if edge_index.numel() > 0:
             src, dst = edge_index[0], edge_index[1]
             w = edge_weight if edge_weight is not None else torch.ones(src.shape[0], device=device)
-            msg = h[src] * w.unsqueeze(-1)
-            agg = torch.zeros((num_nodes, d), device=device, dtype=h.dtype)
             deg = torch.zeros((num_nodes, 1), device=device, dtype=h.dtype)
-            agg.index_add_(0, dst, msg)
             deg.index_add_(0, dst, w.unsqueeze(-1))
+
+            agg = torch.zeros((num_nodes, d), device=device, dtype=h.dtype)
+            agg.index_add_(0, dst, h[src] * w.unsqueeze(-1))
             agg = agg / (deg + 1e-6)
+
+            if enable_in_graph_memory and neighbor_mem is not None:
+                mem_agg = torch.zeros((num_nodes, d), device=device, dtype=h.dtype)
+                mem_agg.index_add_(0, dst, neighbor_mem[src] * w.unsqueeze(-1))
+                mem_agg = mem_agg / (deg + 1e-6)
+                gate = torch.sigmoid(self.mem_gate(torch.cat([h, mem_agg], dim=-1)))
+                mem_signal = gate * mem_agg
+            else:
+                mem_signal = torch.zeros_like(h)
         else:
             agg = torch.zeros_like(h)
+            mem_signal = torch.zeros_like(h)
 
-        h_tx = self.norm_tx(F.gelu(self.lin_self_tx(h) + self.lin_nbr_tx(agg)))
-        h_addr = self.norm_addr(F.gelu(self.lin_self_addr(h) + self.lin_nbr_addr(agg)))
+        h_tx = self.norm_tx(F.gelu(self.lin_self_tx(h) + self.lin_nbr_tx(agg) + self.lin_mem_tx(mem_signal)))
+        h_addr = self.norm_addr(F.gelu(self.lin_self_addr(h) + self.lin_nbr_addr(agg) + self.lin_mem_addr(mem_signal)))
 
         mask = node_is_tx.unsqueeze(-1).float()
         return mask * h_tx + (1.0 - mask) * h_addr
 
 
+class InGraphMotifMemoryBank(nn.Module):
+    """
+    Learnable In-Graph Structural Motif Memory Bank (K prototype slots).
+    Stores recurring laundering topology signatures directly inside the GNN so subgraphs
+    cross-attend against stored laundering motifs, yielding both an enriched memory vector
+    and an interpretable `matched_motif_slot` + `activation_strength`.
+    """
+    def __init__(self, hidden_dim: int, num_slots: int = 8):
+        super().__init__()
+        self.num_slots = num_slots
+        self.keys = nn.Parameter(torch.randn(num_slots, hidden_dim) * 0.2)
+        self.values = nn.Parameter(torch.randn(num_slots, hidden_dim) * 0.2)
+        self.query_proj = nn.Linear(hidden_dim * 2, hidden_dim)
+        self.out_norm = nn.LayerNorm(hidden_dim)
+
+    def forward(
+        self, tse_pool: torch.Tensor, afa_pool: torch.Tensor, enable_in_graph_memory: bool = True
+    ) -> Tuple[torch.Tensor, float, int]:
+        if not enable_in_graph_memory:
+            return torch.zeros_like(tse_pool), 0.0, 0
+
+        q = self.query_proj(torch.cat([tse_pool, afa_pool], dim=-1))
+        scores = torch.matmul(q, self.keys.T) / math.sqrt(q.shape[-1])
+        attn = F.softmax(scores, dim=-1)
+        readout = self.out_norm(torch.matmul(attn, self.values))
+        top_prob, top_slot = torch.max(attn, dim=-1)
+        return readout, float(top_prob.item()), int(top_slot.item())
+
+
 class AmatricianaMemoryCell(nn.Module):
-    """
-    Time-decay + sequence-ordered GRU memory encoder (Amatriciana style).
-    Applies continuous exponential decay exp(-lambda * dt) before updating node state,
-    preserving rapid sequential patterns (peeling chains, cyclic flows) while fading stale history.
-    """
+    """Continuous exponential time-decay + chronological GRU sequence memory (Amatriciana style)."""
     def __init__(self, hidden_dim: int):
         super().__init__()
-        self.raw_decay = nn.Parameter(torch.tensor(0.25))
+        self.raw_decay = nn.Parameter(torch.tensor(0.22))
         self.gru = nn.GRUCell(hidden_dim, hidden_dim)
         self.seq_gru = nn.GRUCell(hidden_dim, hidden_dim)
 
@@ -76,10 +120,8 @@ class AmatricianaMemoryCell(nn.Module):
 
         decay_rate = F.softplus(self.raw_decay)
         decay = torch.exp(-decay_rate * torch.clamp(time_deltas, min=0.0, max=60.0)).unsqueeze(-1)
-        decayed_mem = prev_memories * decay
-        updated_mem = self.gru(h_nodes, decayed_mem)
+        updated_mem = self.gru(h_nodes, prev_memories * decay)
 
-        # Sequential order-sensitive pooling across chronological node arrivals
         seq_state = torch.zeros((1, h_nodes.shape[-1]), device=h_nodes.device)
         for idx in order_idx:
             seq_state = self.seq_gru(updated_mem[idx].unsqueeze(0), seq_state)
@@ -88,11 +130,12 @@ class AmatricianaMemoryCell(nn.Module):
 
 class TemporalBitCHetGNet(nn.Module):
     """
-    Full Hybrid Deep Learning Architecture:
-      - Bit-CHetG heterogeneous encoders (TSE + AFA)
-      - Amatriciana continuous time-decay GRU temporal memory
-      - Supervised Contrastive projection head
-      - Risk logit + 5-class Typology classification head
+    v3 Full Hybrid Deep Learning Architecture:
+      1. Bit-CHetG Heterogeneous Encoders (TSE + AFA)
+      2. Amatriciana Time-Decay Sequential GRU Memory
+      3. In-Graph Memory (Neighborhood Memory Reading + Motif Memory Bank)
+      4. Supervised Contrastive + Risk + 5-Class Typology Head
+    Supports 3-way ablation toggles (`enable_memory`, `enable_in_graph_memory`).
     """
     def __init__(self, in_dim: int = len(FEATURE_KEYS), hidden_dim: int = 32, num_typologies: int = 5):
         super().__init__()
@@ -101,11 +144,13 @@ class TemporalBitCHetGNet(nn.Module):
         self.tx_proj = nn.Sequential(nn.Linear(in_dim, hidden_dim), nn.LayerNorm(hidden_dim), nn.GELU())
         self.addr_proj = nn.Sequential(nn.Linear(in_dim, hidden_dim), nn.LayerNorm(hidden_dim), nn.GELU())
 
-        self.conv1 = HeteroSAGEBlock(hidden_dim)
-        self.conv2 = HeteroSAGEBlock(hidden_dim)
+        self.conv1 = HeteroMemorySAGEBlock(hidden_dim)
+        self.conv2 = HeteroMemorySAGEBlock(hidden_dim)
         self.memory_cell = AmatricianaMemoryCell(hidden_dim)
+        self.motif_bank = InGraphMotifMemoryBank(hidden_dim, num_slots=8)
 
-        fused_dim = hidden_dim * 3  # [TSE_pool || AFA_pool || Temporal_Memory]
+        # [TSE || AFA || Amatriciana_Seq_Memory || InGraph_Motif_Memory]
+        fused_dim = hidden_dim * 4
         self.fusion = nn.Sequential(
             nn.Linear(fused_dim, hidden_dim * 2),
             nn.LayerNorm(hidden_dim * 2),
@@ -125,10 +170,11 @@ class TemporalBitCHetGNet(nn.Module):
         prev_memories: torch.Tensor,
         order_idx: torch.Tensor,
         enable_memory: bool = True,
+        enable_in_graph_memory: bool = True,
         edge_mask: Optional[torch.Tensor] = None,
         node_mask: Optional[torch.Tensor] = None,
         feat_mask: Optional[torch.Tensor] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, float, int]:
         if feat_mask is not None:
             x = x * feat_mask.unsqueeze(0)
         if node_mask is not None:
@@ -137,8 +183,9 @@ class TemporalBitCHetGNet(nn.Module):
         m_tx = node_is_tx.unsqueeze(-1).float()
         h = m_tx * self.tx_proj(x) + (1.0 - m_tx) * self.addr_proj(x)
 
-        h = self.conv1(h, node_is_tx, edge_index, edge_weight=edge_mask)
-        h = self.conv2(h, node_is_tx, edge_index, edge_weight=edge_mask)
+        use_ig_mem = enable_memory and enable_in_graph_memory
+        h = self.conv1(h, node_is_tx, edge_index, neighbor_mem=prev_memories, edge_weight=edge_mask, enable_in_graph_memory=use_ig_mem)
+        h = self.conv2(h, node_is_tx, edge_index, neighbor_mem=prev_memories, edge_weight=edge_mask, enable_in_graph_memory=use_ig_mem)
 
         tx_mask = node_is_tx.bool()
         addr_mask = ~tx_mask
@@ -148,12 +195,15 @@ class TemporalBitCHetGNet(nn.Module):
         mem_seq, updated_mem = self.memory_cell(
             h, time_deltas, prev_memories, order_idx, enable_memory=enable_memory
         )
+        motif_vec, motif_act, motif_slot = self.motif_bank(
+            tse_pool, afa_pool, enable_in_graph_memory=use_ig_mem
+        )
 
-        fused = self.fusion(torch.cat([tse_pool, afa_pool, mem_seq], dim=-1))
+        fused = self.fusion(torch.cat([tse_pool, afa_pool, mem_seq, motif_vec], dim=-1))
         contrastive_emb = F.normalize(self.contrastive_proj(fused), dim=-1)
         risk_logit = self.risk_head(fused).squeeze(-1)
         typology_logits = self.typology_head(fused)
-        return risk_logit, typology_logits, contrastive_emb, updated_mem
+        return risk_logit, typology_logits, contrastive_emb, updated_mem, motif_act, motif_slot
 
 
 def subgraph_to_tensors(
@@ -169,8 +219,7 @@ def subgraph_to_tensors(
     node_is_tx = torch.tensor([1 if n.node_type == NodeType.TRANSACTION else 0 for n in nodes], dtype=torch.long, device=device)
     time_deltas = torch.tensor([float(n.features.get("time_delta_prev", 0.0)) for n in nodes], dtype=torch.float32, device=device)
 
-    src_idx, dst_idx = [], []
-    valid_edge_ids = []
+    src_idx, dst_idx, valid_edge_ids = [], [], []
     for e in edges:
         if e.source_id in id_to_idx and e.target_id in id_to_idx:
             src_idx.append(id_to_idx[e.source_id])
@@ -187,35 +236,24 @@ def subgraph_to_tensors(
         prev_mem = torch.zeros((len(nodes), memory_dim), dtype=torch.float32, device=device)
 
     order_idx = torch.tensor(
-        sorted(range(len(nodes)), key=lambda i: nodes[i].timestamp),
-        dtype=torch.long,
-        device=device,
+        sorted(range(len(nodes)), key=lambda i: nodes[i].timestamp), dtype=torch.long, device=device
     )
     return x, node_is_tx, edge_index, time_deltas, prev_mem, order_idx, valid_edge_ids
 
 
 class FocalContrastiveLoss(nn.Module):
-    """Focal Loss (for ~2% illicit class imbalance) + Supervised Contrastive Loss."""
     def __init__(self, alpha: float = 0.85, gamma: float = 2.0, temperature: float = 0.2):
         super().__init__()
         self.alpha = alpha
         self.gamma = gamma
         self.temperature = temperature
 
-    def forward(
-        self,
-        risk_logits: torch.Tensor,
-        labels: torch.Tensor,
-        embeddings: torch.Tensor,
-        typ_logits: Optional[torch.Tensor] = None,
-        typ_targets: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
+    def forward(self, risk_logits, labels, embeddings, typ_logits=None, typ_targets=None):
         bce = F.binary_cross_entropy_with_logits(risk_logits, labels.float(), reduction="none")
         pt = torch.exp(-bce)
         alpha_t = self.alpha * labels.float() + (1.0 - self.alpha) * (1.0 - labels.float())
         focal = (alpha_t * ((1.0 - pt) ** self.gamma) * bce).mean()
 
-        # Supervised contrastive term over batch embeddings
         con_loss = torch.tensor(0.0, device=risk_logits.device)
         if embeddings.shape[0] > 2:
             sim = torch.matmul(embeddings, embeddings.T) / self.temperature
@@ -229,28 +267,20 @@ class FocalContrastiveLoss(nn.Module):
             if valid.any():
                 con_loss = -((same_cls * log_prob).sum(dim=1)[valid] / pos_cnt[valid]).mean()
 
-        typ_loss = torch.tensor(0.0, device=risk_logits.device)
-        if typ_logits is not None and typ_targets is not None:
-            typ_loss = F.cross_entropy(typ_logits, typ_targets)
-
+        typ_loss = F.cross_entropy(typ_logits, typ_targets) if (typ_logits is not None and typ_targets is not None) else torch.tensor(0.0, device=risk_logits.device)
         return focal + 0.25 * con_loss + 0.35 * typ_loss
 
 
 def load_model_from_gcs_or_init(
     vault_bucket: Optional[str] = None,
-    blob_path: str = "models/temporal_bitchetg.pt",
-    local_cache: str = "/tmp/temporal_bitchetg.pt",
+    blob_path: str = "models/temporal_bitchetg_v3.pt",
+    local_cache: str = "/tmp/temporal_bitchetg_v3.pt",
 ) -> Tuple[TemporalBitCHetGNet, str]:
-    """
-    Automatically loads trained weights from GCS if available (after GPU training).
-    Otherwise boots cleanly with calibrated initial weights so Cloud Run works on Day 1.
-    """
     model = TemporalBitCHetGNet()
     if vault_bucket:
         try:
             from google.cloud import storage
-            client = storage.Client()
-            blob = client.bucket(vault_bucket).blob(blob_path)
+            blob = storage.Client().bucket(vault_bucket).blob(blob_path)
             if blob.exists():
                 blob.download_to_filename(local_cache)
                 state = torch.load(local_cache, map_location="cpu")
@@ -258,7 +288,7 @@ def load_model_from_gcs_or_init(
                 model.eval()
                 return model, "TRAINED_GCS_CHECKPOINT"
         except Exception as exc:
-            print(f"[ModelLoader] GCS checkpoint not loaded yet ({exc}); using fallback init.")
+            print(f"[ModelLoader] GCS checkpoint not found yet ({exc}); booting Day-1 fallback.")
 
     if os.path.exists(local_cache):
         state = torch.load(local_cache, map_location="cpu")

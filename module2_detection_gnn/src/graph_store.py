@@ -4,12 +4,13 @@ from typing import Dict, List, Tuple
 from contracts.schemas import TransactionEvent, Node, Edge
 from module1_data_pipeline.src.features import ExplicitFeatureBuilder
 
+
 class IncrementalGraphStore:
     """
-    Maintains the live heterogeneous graph and per-node PyTorch temporal memory vectors.
-    Evicts expired edges outside `max_window_seconds` so serverless memory stays bounded.
+    Live heterogeneous graph store with persistent per-node temporal memory vectors
+    AND edge-level temporal spacing tracking for interlaced multi-hop campaign detection.
     """
-    def __init__(self, memory_dim: int = 32, max_window_seconds: int = 1800):
+    def __init__(self, memory_dim: int = 32, max_window_seconds: int = 2400):
         self.g = nx.MultiDiGraph()
         self.nodes: Dict[str, Node] = {}
         self.edges: Dict[str, Edge] = {}
@@ -25,6 +26,8 @@ class IncrementalGraphStore:
                 self.memory[n.node_id] = torch.zeros(self.memory_dim, dtype=torch.float32)
 
         for e in event.edges:
+            if e.temporal_spacing_sec <= 0.0 and e.source_id in self.last_updated:
+                e.temporal_spacing_sec = float(max(0, e.timestamp - self.last_updated[e.source_id]))
             self.edges[e.edge_id] = e
             self.g.add_edge(e.source_id, e.target_id, key=e.edge_id, value=e.value, timestamp=e.timestamp)
 
@@ -33,6 +36,7 @@ class IncrementalGraphStore:
             self.nodes[nid].features = ExplicitFeatureBuilder.compute_node_features(
                 nid, event.timestamp, self.g, self.last_updated
             )
+            self.nodes[nid].memory_norm = round(float(torch.linalg.norm(self.memory[nid]).item()), 4)
             self.last_updated[nid] = event.timestamp
 
         self._evict_expired(event.timestamp)

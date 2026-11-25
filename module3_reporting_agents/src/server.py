@@ -6,19 +6,27 @@ from module3_reporting_agents.src.evidence_builder import EvidenceArtifactBuilde
 from module3_reporting_agents.src.orchestrator import AgenticForensicOrchestrator
 from module3_reporting_agents.src.pdf_exporter import ForensicDossierPDFExporter
 
-app = FastAPI(title="Module 3 — GNNExplainer + OSINT RAG + Compliance Critic + PDF Service")
+app = FastAPI(title="Module 3 — GNNExplainer + OSINT Scraper + RAG + Gemini LLM + PDF Service")
 
 VAULT_BUCKET = os.getenv("VAULT_BUCKET", "")
-MODEL_BLOB_PATH = os.getenv("MODEL_BLOB_PATH", "models/temporal_bitchetg.pt")
+MODEL_BLOB_PATH = os.getenv("MODEL_BLOB_PATH", "models/temporal_bitchetg_v3.pt")
 
 model, checkpoint_status = load_model_from_gcs_or_init(VAULT_BUCKET, MODEL_BLOB_PATH)
-builder = EvidenceArtifactBuilder(model)
+builder = EvidenceArtifactBuilder(model, enable_live_scrape=True)
 orchestrator = AgenticForensicOrchestrator()
 
 
 @app.get("/health")
 def health():
     return {"status": "ok", "checkpoint_status": checkpoint_status}
+
+
+@app.post("/reload-checkpoint")
+def reload_checkpoint():
+    global model, checkpoint_status, builder
+    model, checkpoint_status = load_model_from_gcs_or_init(VAULT_BUCKET, MODEL_BLOB_PATH)
+    builder = EvidenceArtifactBuilder(model, enable_live_scrape=True)
+    return {"reloaded": True, "checkpoint_status": checkpoint_status}
 
 
 @app.post("/explain-and-report")

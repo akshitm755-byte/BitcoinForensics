@@ -12,6 +12,16 @@ FEATURE_KEYS = [
     "hop2_neighbor_count",
 ]
 
+LICIT_FEATURE_BASELINES = {
+    "in_degree": 1.15,
+    "out_degree": 1.12,
+    "total_in_val": 0.48,
+    "total_out_val": 0.46,
+    "time_delta_prev": 4.20,  # minutes
+    "fan_out_ratio": 0.58,
+    "hop2_neighbor_count": 1.35,
+}
+
 class NodeType(str, Enum):
     TRANSACTION = "transaction"
     ADDRESS = "address"
@@ -39,7 +49,8 @@ class Node(BaseModel):
     node_type: NodeType
     timestamp: int
     features: Dict[str, float] = Field(default_factory=dict)
-    label: Optional[int] = None  # 0: licit, 1: illicit, None: unknown
+    memory_norm: float = 0.0
+    label: Optional[int] = None
 
 class Edge(BaseModel):
     edge_id: str
@@ -48,6 +59,7 @@ class Edge(BaseModel):
     edge_type: EdgeType
     value: float
     timestamp: int
+    temporal_spacing_sec: float = 0.0
 
 class HetGraph(BaseModel):
     nodes: List[Node]
@@ -65,7 +77,9 @@ class TransactionEvent(BaseModel):
     timestamp: int
     nodes: List[Node]
     edges: List[Edge]
-    source: str = "amlsim_stream"
+    source: str = "amlsim_interlaced_stream"
+    campaign_id: Optional[str] = None
+    cadence_algorithm: Optional[str] = None
     ground_truth_typology: Optional[Typology] = None
 
 class SplitManifest(BaseModel):
@@ -83,16 +97,35 @@ class Alert(BaseModel):
     timestamp: int
     risk_score: float
     model_version: str
-    model_checkpoint_status: str = "INITIALIZED_FALLBACK"
+    model_checkpoint_status: str = "UNTRAINED_DAY1_FALLBACK"
+    in_graph_memory_activation: float = 0.0
+    matched_motif_slot: int = 0
     predicted_typology: Typology
+    cadence_signature: str = "standard_jitter"
     window_bounds: Tuple[int, int]
     subgraph_nodes: List[Node]
     subgraph_edges: List[Edge]
     is_false_positive: bool = False
 
+class HistoricCaseMatch(BaseModel):
+    case_id: str
+    case_name: str
+    year: int
+    source_domain: str
+    source_url: str
+    typology: str
+    similarity_index: float
+    escalation_rate: float
+    amount_lost_usd: Optional[str] = None
+    temporal_spacing_pattern: str
+    pseudorandomization_signature: str
+    summary: str
+    fetched_live: bool = False
+
 class DocRef(BaseModel):
     doc_id: str
     source_title: str
+    source_url: str = ""
     entity_id: str
     span_start: int
     span_end: int
@@ -108,6 +141,8 @@ class Evidence(BaseModel):
     node_importance_mask: Dict[str, float]
     edge_importance_mask: Dict[str, float]
     feature_attributions: Dict[str, float]
+    statistical_correlations: Dict[str, float] = Field(default_factory=dict)
+    historic_case_matches: List[HistoricCaseMatch] = Field(default_factory=list)
     attribution_available: bool
     doc_refs: List[DocRef] = Field(default_factory=list)
 
@@ -117,6 +152,7 @@ class Evidence(BaseModel):
             | set(self.minimal_edges)
             | set(self.feature_attributions.keys())
             | {d.doc_id for d in self.doc_refs}
+            | {c.case_id for c in self.historic_case_matches}
         )
         return ref_id in valid_ids
 
@@ -132,7 +168,8 @@ class Report(BaseModel):
     correlation_id: str
     faithfulness_score: float
     completeness_score: float = 1.0
-    critic_verdict: str  # "APPROVED" or "ESCALATED_TO_HUMAN"
+    critic_verdict: str
+    narrative_engine: str = "deterministic_grounded"
     claims: List[Claim]
     evidence: Evidence
     pdf_gcs_uri: Optional[str] = None

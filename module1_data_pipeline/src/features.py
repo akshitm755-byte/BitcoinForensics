@@ -4,19 +4,14 @@ from typing import Dict
 from contracts.schemas import FEATURE_KEYS
 
 class ExplicitFeatureBuilder:
-    """
-    Computes 7 explicitly defined, recomputable features for any unseen streaming node.
-    Replaces Elliptic's undisclosed black-box features so live Bitcoin/AMLSim streams
-    share the exact same feature space as training data.
-    """
     FEATURE_SPEC = {
         "in_degree": "Incoming edge count in active window",
         "out_degree": "Outgoing edge count in active window",
         "total_in_val": "Log-scaled sum of incoming BTC value",
         "total_out_val": "Log-scaled sum of outgoing BTC value",
-        "time_delta_prev": "Seconds elapsed since node's previous event (capped at 3600s)",
+        "time_delta_prev": "Minutes elapsed since node's previous interaction",
         "fan_out_ratio": "out_degree / (in_degree + 1.0) — captures peeling & fan-out",
-        "hop2_neighbor_count": "Log-scaled 2-hop neighborhood size",
+        "hop2_neighbor_count": "Log-scaled 2-hop neighborhood density",
     }
 
     @staticmethod
@@ -46,7 +41,7 @@ class ExplicitFeatureBuilder:
             "out_degree": round(out_deg, 4),
             "total_in_val": round(math.log1p(max(0.0, in_val)), 4),
             "total_out_val": round(math.log1p(max(0.0, out_val)), 4),
-            "time_delta_prev": round(time_delta / 60.0, 4),  # minutes
+            "time_delta_prev": round(time_delta / 60.0, 4),
             "fan_out_ratio": round(fan_out_ratio, 4),
             "hop2_neighbor_count": round(math.log1p(len(hop2 - {node_id})), 4),
         }

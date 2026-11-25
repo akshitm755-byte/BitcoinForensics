@@ -7,6 +7,7 @@ export default function App() {
   const [selectedAlertId, setSelectedAlertId] = useState(null);
   const [alertDetail, setAlertDetail] = useState(null);
   const [selectedClaim, setSelectedClaim] = useState(null);
+  const [reloading, setReloading] = useState(false);
 
   const pollState = async () => {
     try {
@@ -46,6 +47,16 @@ export default function App() {
     pollState();
   };
 
+  const reloadModels = async () => {
+    setReloading(true);
+    try {
+      await fetch("/api/models/reload", { method: "POST" });
+      await pollState();
+    } finally {
+      setReloading(false);
+    }
+  };
+
   const toggleFP = async (alertId) => {
     await fetch(`/api/alerts/${alertId}/false-positive`, { method: "POST" });
     loadAlertDetail(alertId);
@@ -54,89 +65,132 @@ export default function App() {
 
   const streamRunning = state?.stream?.running || false;
   const alerts = state?.alerts || [];
+  const trained = state?.stream?.checkpoint_status === "TRAINED_GCS_CHECKPOINT";
 
   return (
-    <div style={{ minHeight: "100vh", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 14 }}>
-      {/* Top Bureau Command Bar */}
-      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, background: "#090f1d", border: "1px solid #1e293b", padding: "12px 16px", borderRadius: 10 }}>
+    <div style={{ minHeight: "100vh", padding: "16px 20px", display: "flex", flexDirection: "column", gap: 14, maxWidth: 1680, margin: "0 auto" }}>
+      {/* Minimalist Top Header */}
+      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, background: "#11141c", border: "1px solid #1e232e", padding: "12px 18px", borderRadius: 12 }}>
         <div>
-          <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: "0.04em", color: "#f8fafc" }}>
-            AUTONOMOUS BLOCKCHAIN INVESTIGATOR
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 15, fontWeight: 700, letterSpacing: "-0.01em", color: "#f8fafc" }}>
+              ABI Forensics
+            </span>
+            <span
+              style={{
+                fontSize: 10, fontFamily: "'JetBrains Mono', monospace", padding: "2px 7px", borderRadius: 99,
+                background: trained ? "rgba(34,197,94,0.14)" : "rgba(245,158,11,0.14)",
+                color: trained ? "#4ade80" : "#fbbf24",
+              }}
+            >
+              {state?.stream?.checkpoint_status || "CONNECTING"}
+            </span>
           </div>
-          <div style={{ fontSize: 11, color: "#64748b", fontFamily: "monospace" }}>
-            TEMPORAL BIT-CHETG + AMATRICIANA // MODEL: {state?.stream?.checkpoint_status || "INITIALIZING"} // EVENTS: {state?.stream?.events_processed || 0}
+          <div style={{ fontSize: 11, color: "#64748b", fontFamily: "'JetBrains Mono', monospace", marginTop: 3 }}>
+            Bit-CHetG + Amatriciana + In-Graph Memory · Events: {state?.stream?.events_processed || 0} · Interlaced Queue: {state?.stream?.interlaced_pending_hops || 0} hops
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          <button onClick={() => controlStream(streamRunning ? "pause" : "start")} style={{ background: streamRunning ? "#dc2626" : "#16a34a", color: "#fff", border: "none", borderRadius: 6, padding: "7px 14px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
-            {streamRunning ? "Pause Live Stream" : "Start Live AMLSim Stream"}
+        <div style={{ display: "flex", gap: 7, flexWrap: "wrap", alignItems: "center" }}>
+          <button
+            onClick={() => controlStream(streamRunning ? "pause" : "start")}
+            style={{
+              background: streamRunning ? "#e11d48" : "#f8fafc",
+              color: streamRunning ? "#fff" : "#0a0c10",
+              border: "none", borderRadius: 7, padding: "7px 14px", fontSize: 12, fontWeight: 600, cursor: "pointer",
+            }}
+          >
+            {streamRunning ? "Pause Stream" : "Start AMLSim Stream"}
           </button>
-          <button onClick={() => injectTypology("peeling_chain")} style={{ background: "#1e293b", color: "#f8fafc", border: "1px solid #334155", borderRadius: 6, padding: "7px 10px", fontSize: 11, cursor: "pointer" }}>
-            + Inject Peeling Chain
-          </button>
-          <button onClick={() => injectTypology("fan_out_fan_in")} style={{ background: "#1e293b", color: "#f8fafc", border: "1px solid #334155", borderRadius: 6, padding: "7px 10px", fontSize: 11, cursor: "pointer" }}>
-            + Inject Fan-Out/In
-          </button>
-          <button onClick={() => injectTypology("cyclic_flow")} style={{ background: "#1e293b", color: "#f8fafc", border: "1px solid #334155", borderRadius: 6, padding: "7px 10px", fontSize: 11, cursor: "pointer" }}>
-            + Inject Cyclic Ring
-          </button>
-          <button onClick={() => injectTypology("smurfing")} style={{ background: "#1e293b", color: "#f8fafc", border: "1px solid #334155", borderRadius: 6, padding: "7px 10px", fontSize: 11, cursor: "pointer" }}>
-            + Inject Smurfing
+          {[
+            ["peeling_chain", "Peeling Chain"],
+            ["fan_out_fan_in", "Fan-Out / In"],
+            ["cyclic_flow", "Cyclic Ring"],
+            ["smurfing", "Smurfing"],
+          ].map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => injectTypology(key)}
+              style={{
+                background: "#181c26", color: "#cbd5e1", border: "1px solid #262b36",
+                borderRadius: 7, padding: "7px 10px", fontSize: 11.5, cursor: "pointer",
+              }}
+            >
+              + {label}
+            </button>
+          ))}
+          <button
+            onClick={reloadModels}
+            disabled={reloading}
+            style={{
+              background: "transparent", color: "#38bdf8", border: "1px solid rgba(56,189,248,0.35)",
+              borderRadius: 7, padding: "7px 10px", fontSize: 11.5, cursor: "pointer",
+            }}
+          >
+            {reloading ? "Syncing…" : "Sync GCS Model"}
           </button>
         </div>
 
-        <div style={{ fontSize: 11, fontFamily: "monospace", color: "#94a3b8" }}>
-          DETECT p50: <strong style={{ color: "#38bdf8" }}>{state?.latency?.p50_ms || 0}ms</strong> | p95: <strong>{state?.latency?.p95_ms || 0}ms</strong>
+        <div style={{ fontSize: 11, fontFamily: "'JetBrains Mono', monospace", color: "#94a3b8" }}>
+          p50 <strong style={{ color: "#f8fafc" }}>{state?.latency?.p50_ms || 0}ms</strong> · p95 <strong>{state?.latency?.p95_ms || 0}ms</strong>
         </div>
       </header>
 
-      {/* Main 3-Column Bureau Workspace */}
-      <div style={{ display: "grid", gridTemplateColumns: "270px 1fr 410px", gap: 14, alignItems: "start" }}>
+      {/* Main 3-Pane Forensics Workspace */}
+      <div style={{ display: "grid", gridTemplateColumns: "265px 1fr 425px", gap: 14, alignItems: "start" }}>
         {/* Left: Ranked Alert Queue */}
-        <aside style={{ background: "#090f1d", border: "1px solid #1e293b", borderRadius: 10, padding: 12, maxHeight: 540, overflowY: "auto" }}>
-          <div style={{ fontSize: 11, fontFamily: "monospace", color: "#94a3b8", marginBottom: 10 }}>
-            RANKED ALERT QUEUE ({alerts.length})
+        <aside style={{ background: "#11141c", border: "1px solid #1e232e", borderRadius: 12, padding: 14, maxHeight: 595, overflowY: "auto" }}>
+          <div style={{ fontSize: 10.5, fontFamily: "'JetBrains Mono', monospace", color: "#64748b", marginBottom: 10 }}>
+            ALERT QUEUE ({alerts.length})
           </div>
           {alerts.length === 0 && (
-            <div style={{ fontSize: 12, color: "#64748b" }}>
-              No alerts yet. Click <b>Start Live AMLSim Stream</b> or inject a typology above.
+            <div style={{ fontSize: 12, color: "#64748b", lineHeight: 1.55 }}>
+              Stream idle. Start the interlaced AMLSim feed or inject a laundering campaign to observe multi-hop detection across licit traffic.
             </div>
           )}
-          {alerts.map((a) => (
-            <div
-              key={a.alert_id}
-              onClick={() => { setSelectedAlertId(a.alert_id); setSelectedClaim(null); }}
-              style={{
-                padding: 10, marginBottom: 8, borderRadius: 6, cursor: "pointer",
-                background: selectedAlertId === a.alert_id ? "#172554" : "#0f172a",
-                borderLeft: a.is_false_positive ? "3px solid #eab308" : "3px solid #ef4444",
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, fontFamily: "monospace" }}>
-                <strong style={{ color: "#f8fafc" }}>{a.alert_id}</strong>
-                <span style={{ color: "#ef4444", fontWeight: 700 }}>{(a.risk_score * 100).toFixed(1)}%</span>
+          {alerts.map((a) => {
+            const active = selectedAlertId === a.alert_id;
+            return (
+              <div
+                key={a.alert_id}
+                onClick={() => { setSelectedAlertId(a.alert_id); setSelectedClaim(null); }}
+                style={{
+                  padding: "10px 11px", marginBottom: 8, borderRadius: 8, cursor: "pointer",
+                  background: active ? "#181f2e" : "#0a0c10",
+                  border: `1px solid ${active ? "#38bdf8" : "#1e232e"}`,
+                  borderLeft: `3px solid ${a.is_false_positive ? "#eab308" : "#f43f5e"}`,
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, fontFamily: "'JetBrains Mono', monospace" }}>
+                  <strong style={{ color: "#f8fafc" }}>{a.alert_id}</strong>
+                  <span style={{ color: "#fb7185", fontWeight: 600 }}>{(a.risk_score * 100).toFixed(1)}%</span>
+                </div>
+                <div style={{ fontSize: 12, color: "#cbd5e1", fontWeight: 500, marginTop: 3 }}>
+                  {a.predicted_typology.replace(/_/g, " ").toUpperCase()}
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, fontFamily: "'JetBrains Mono', monospace", marginTop: 5 }}>
+                  <span style={{ color: a.has_report ? "#4ade80" : "#38bdf8" }}>
+                    {a.has_report ? "● PDF READY" : "◌ EXPLAINING…"}
+                  </span>
+                  {a.top_similarity && <span style={{ color: "#94a3b8" }}>SIM {a.top_similarity.toFixed(2)}</span>}
+                </div>
               </div>
-              <div style={{ fontSize: 12, color: "#cbd5e1", marginTop: 3 }}>
-                {a.predicted_typology.replace(/_/g, " ").toUpperCase()}
-              </div>
-              <div style={{ fontSize: 10, color: a.has_report ? "#22c55e" : "#38bdf8", fontFamily: "monospace", marginTop: 4 }}>
-                {a.has_report ? "● DOSSIER SEALED (PDF READY)" : "◌ EXPLAINING SUBGRAPH…"}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </aside>
 
-        {/* Center: Live Expanding & Fading Temporal Graph */}
+        {/* Center: Dynamic Interactable Graph + Clickable Feature Insight Window */}
         <main>
           <LiveExpandingGraph
             incomingBatch={state?.latest_batch}
+            focusedAlert={alertDetail?.alert}
             evidenceMask={alertDetail?.report?.evidence}
             highlightedRefs={selectedClaim?.evidence_refs || []}
+            baselines={state?.baselines || {}}
           />
         </main>
 
-        {/* Right: Evidence-Grounded Dossier & Provenance Viewer */}
+        {/* Right: Dossier, Historic Similarity & Provenance Panel */}
         <section>
           <DossierViewer
             detail={alertDetail}

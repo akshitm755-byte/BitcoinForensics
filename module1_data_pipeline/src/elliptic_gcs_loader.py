@@ -1,20 +1,14 @@
 import os
 import pandas as pd
 import networkx as nx
-from typing import Optional, Tuple, List
+from typing import Optional, List
 from contracts.schemas import Node, Edge, NodeType, EdgeType, HetGraph
 from module1_data_pipeline.src.features import ExplicitFeatureBuilder
 
 DEFAULT_ELLIPTIC_PREFIX = "raw/elliptic_pp/Elliptic++ Dataset"
 
 class EllipticPlusPlusGCSLoader:
-    """
-    Loads the real Elliptic++ dataset directly from GCS (or local cache directory):
-      - txs_features.csv, txs_classes.csv, txs_edgelist.csv
-      - wallets_features_classes_combined.csv (or wallets_classes.csv)
-      - AddrTx_edgelist.csv, TxAddr_edgelist.csv, AddrAddr_edgelist.csv
-    Rebuilds explicit recomputable features rather than relying on undisclosed raw features.
-    """
+    """Loads real Elliptic++ CSVs from GCS and rebuilds explicit recomputable features."""
     def __init__(
         self,
         local_dir: str = "/tmp/elliptic_pp_cache",
@@ -54,59 +48,49 @@ class EllipticPlusPlusGCSLoader:
         if self.gcs_bucket:
             self.sync_from_gcs()
 
-        tx_cls_path = os.path.join(self.local_dir, "txs_classes.csv")
-        tx_feat_path = os.path.join(self.local_dir, "txs_features.csv")
-        tx_edge_path = os.path.join(self.local_dir, "txs_edgelist.csv")
-        addr_tx_path = os.path.join(self.local_dir, "AddrTx_edgelist.csv")
-        tx_addr_path = os.path.join(self.local_dir, "TxAddr_edgelist.csv")
-
-        # 1. Load transaction timestamps & classes (Elliptic++ class: 1=illicit, 2=licit, 3=unknown)
-        tx_cls = pd.read_csv(tx_cls_path)
+        tx_cls = pd.read_csv(os.path.join(self.local_dir, "txs_classes.csv"))
         tx_cls.columns = [c.strip() for c in tx_cls.columns]
-        tx_id_col = tx_cls.columns[0]
-        cls_col = tx_cls.columns[1]
+        tx_id_col, cls_col = tx_cls.columns[0], tx_cls.columns[1]
 
-        tx_feat = pd.read_csv(tx_feat_path, usecols=[0, 1])
+        tx_feat = pd.read_csv(os.path.join(self.local_dir, "txs_features.csv"), usecols=[0, 1])
         tx_feat.columns = [tx_id_col, "time_step"]
 
         tx_df = tx_feat.merge(tx_cls, on=tx_id_col, how="left")
         if max_txs:
-            # Keep balanced temporal coverage across all 49 timesteps when subsampling
-            tx_df = tx_df.sort_values("time_step").groupby("time_step", group_keys=False).apply(
-                lambda df: df.head(max(1, max_txs // 49))
+            # Keep ALL labeled illicit transactions first so minority class (~2%) isn't lost in subsampling
+            illicit_df = tx_df[tx_df[cls_col].astype(str).str.strip() == "1"]
+            other_df = tx_df[tx_df[cls_col].astype(str).str.strip() != "1"]
+            rem_quota = max(1000, max_txs - len(illicit_df))
+            other_sub = other_df.sort_values("time_step").groupby("time_step", group_keys=False).apply(
+                lambda df: df.head(max(1, rem_quota // 49))
             )
+            tx_df = pd.concat([illicit_df, other_sub], ignore_index=True).drop_duplicates(subset=[tx_id_col])
 
         def map_label(val):
             s = str(val).strip()
-            if s == "1":
-                return 1
-            if s == "2":
-                return 0
-            return None
+            return 1 if s == "1" else (0 if s == "2" else None)
 
         tx_nodes_map = {}
         valid_tx_ids = set()
         for row in tx_df.itertuples(index=False):
             tid = str(getattr(row, tx_id_col))
-            ts = int(getattr(row, "time_step")) * 1200  # ~20 min per Elliptic timestep
-            lbl = map_label(getattr(row, cls_col))
+            ts = int(getattr(row, "time_step")) * 1200
             nid = f"tx_{tid}"
             valid_tx_ids.add(tid)
             tx_nodes_map[nid] = Node(
-                node_id=nid, node_type=NodeType.TRANSACTION, timestamp=ts, label=lbl
+                node_id=nid, node_type=NodeType.TRANSACTION, timestamp=ts, label=map_label(getattr(row, cls_col))
             )
 
         edges: List[Edge] = []
         addr_nodes_map = {}
 
-        # 2. Transaction-to-Transaction edges
+        tx_edge_path = os.path.join(self.local_dir, "txs_edgelist.csv")
         if os.path.exists(tx_edge_path):
-            tx_edges_df = pd.read_csv(tx_edge_path)
-            c0, c1 = tx_edges_df.columns[0], tx_edges_df.columns[1]
-            tx_edges_df[c0] = tx_edges_df[c0].astype(str)
-            tx_edges_df[c1] = tx_edges_df[c1].astype(str)
-            tx_edges_df = tx_edges_df[tx_edges_df[c0].isin(valid_tx_ids) & tx_edges_df[c1].isin(valid_tx_ids)]
-            for idx, r in enumerate(tx_edges_df.itertuples(index=False)):
+            df = pd.read_csv(tx_edge_path)
+            c0, c1 = df.columns[0], df.columns[1]
+            df[c0], df[c1] = df[c0].astype(str), df[c1].astype(str)
+            df = df[df[c0].isin(valid_tx_ids) & df[c1].isin(valid_tx_ids)]
+            for idx, r in enumerate(df.itertuples(index=False)):
                 u, v = f"tx_{getattr(r, c0)}", f"tx_{getattr(r, c1)}"
                 ts = max(tx_nodes_map[u].timestamp, tx_nodes_map[v].timestamp)
                 edges.append(Edge(
@@ -114,18 +98,16 @@ class EllipticPlusPlusGCSLoader:
                     edge_type=EdgeType.TX_TO_TX, value=1.0, timestamp=ts
                 ))
 
-        # 3. Address <-> Transaction edges (heterogeneous structure for Bit-CHetG AFA)
-        for path, is_in, etype, prefix in [
-            (addr_tx_path, True, EdgeType.ADDR_TO_TX, "e_atx"),
-            (tx_addr_path, False, EdgeType.TX_TO_ADDR, "e_txa"),
+        for fname, is_in, etype, prefix in [
+            ("AddrTx_edgelist.csv", True, EdgeType.ADDR_TO_TX, "e_atx"),
+            ("TxAddr_edgelist.csv", False, EdgeType.TX_TO_ADDR, "e_txa"),
         ]:
+            path = os.path.join(self.local_dir, fname)
             if os.path.exists(path):
                 df = pd.read_csv(path)
                 c0, c1 = df.columns[0], df.columns[1]
-                df[c0] = df[c0].astype(str)
-                df[c1] = df[c1].astype(str)
-                tx_col = c1 if is_in else c0
-                addr_col = c0 if is_in else c1
+                df[c0], df[c1] = df[c0].astype(str), df[c1].astype(str)
+                tx_col, addr_col = (c1, c0) if is_in else (c0, c1)
                 df = df[df[tx_col].isin(valid_tx_ids)]
                 for idx, r in enumerate(df.itertuples(index=False)):
                     tid = f"tx_{getattr(r, tx_col)}"
@@ -142,7 +124,6 @@ class EllipticPlusPlusGCSLoader:
                         edge_type=etype, value=1.0, timestamp=ts
                     ))
 
-        # 4. Recompute explicit features chronologically
         all_nodes = {**tx_nodes_map, **addr_nodes_map}
         edges.sort(key=lambda e: e.timestamp)
         g = nx.MultiDiGraph()
@@ -156,5 +137,4 @@ class EllipticPlusPlusGCSLoader:
                     )
                     last_seen[nid] = e.timestamp
 
-        sorted_nodes = sorted(all_nodes.values(), key=lambda n: n.timestamp)
-        return HetGraph(nodes=sorted_nodes, edges=edges)
+        return HetGraph(nodes=sorted(all_nodes.values(), key=lambda n: n.timestamp), edges=edges)
