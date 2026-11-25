@@ -18,16 +18,12 @@ provider "google" {
   region  = var.region
 }
 
-data "google_project" "current" {
-  project_id = var.project_id
-}
-
 locals {
-  registry = "${var.region}-docker.pkg.dev/${var.project_id}/abi-forensics-repo"
-  compute_sa = "${data.google_project.current.number}-compute@developer.gserviceaccount.com"
+  registry   = "${var.region}-docker.pkg.dev/${var.project_id}/abi-forensics-repo"
+  compute_sa = "454908242756-compute@developer.gserviceaccount.com"
 }
 
-# Ensure Cloud Run runtime service account can read/write checkpoints & PDFs in GCS vault
+# Grant Cloud Run runtime service account read/write access to GCS checkpoints & PDFs
 resource "google_storage_bucket_iam_member" "cloudrun_vault_access" {
   bucket = var.vault_bucket
   role   = "roles/storage.objectUser"
@@ -55,13 +51,27 @@ resource "google_cloud_run_v2_service" "mod2_gnn" {
     }
     containers {
       image = "${local.registry}/mod2-gnn:${var.image_tag}"
-      ports { container_port = 8080 }
-      resources {
-        limits = { cpu = "2", memory = "2Gi" }
+      ports {
+        container_port = 8080
       }
-      env { name = "VAULT_BUCKET"; value = var.vault_bucket }
-      env { name = "MODEL_BLOB_PATH"; value = "models/temporal_bitchetg_v3.pt" }
-      env { name = "ALERT_THRESHOLD"; value = "0.58" }
+      resources {
+        limits = {
+          cpu    = "2"
+          memory = "2Gi"
+        }
+      }
+      env {
+        name  = "VAULT_BUCKET"
+        value = var.vault_bucket
+      }
+      env {
+        name  = "MODEL_BLOB_PATH"
+        value = "models/temporal_bitchetg_v3.pt"
+      }
+      env {
+        name  = "ALERT_THRESHOLD"
+        value = "0.58"
+      }
     }
   }
 }
@@ -79,14 +89,31 @@ resource "google_cloud_run_v2_service" "mod3_agents" {
     }
     containers {
       image = "${local.registry}/mod3-agents:${var.image_tag}"
-      ports { container_port = 8080 }
-      resources {
-        limits = { cpu = "2", memory = "2Gi" }
+      ports {
+        container_port = 8080
       }
-      env { name = "VAULT_BUCKET"; value = var.vault_bucket }
-      env { name = "MODEL_BLOB_PATH"; value = "models/temporal_bitchetg_v3.pt" }
-      env { name = "GEMINI_API_KEY"; value = var.gemini_api_key }
-      env { name = "GEMINI_MODEL"; value = var.gemini_model }
+      resources {
+        limits = {
+          cpu    = "2"
+          memory = "2Gi"
+        }
+      }
+      env {
+        name  = "VAULT_BUCKET"
+        value = var.vault_bucket
+      }
+      env {
+        name  = "MODEL_BLOB_PATH"
+        value = "models/temporal_bitchetg_v3.pt"
+      }
+      env {
+        name  = "GEMINI_API_KEY"
+        value = var.gemini_api_key
+      }
+      env {
+        name  = "GEMINI_MODEL"
+        value = var.gemini_model
+      }
     }
   }
 }
@@ -104,14 +131,31 @@ resource "google_cloud_run_v2_service" "mod4_runtime" {
     }
     containers {
       image = "${local.registry}/mod4-runtime:${var.image_tag}"
-      ports { container_port = 8080 }
-      resources {
-        limits = { cpu = "2", memory = "2Gi" }
+      ports {
+        container_port = 8080
       }
-      env { name = "VAULT_BUCKET"; value = var.vault_bucket }
-      env { name = "GNN_SERVICE_URL"; value = google_cloud_run_v2_service.mod2_gnn.uri }
-      env { name = "REPORTING_SERVICE_URL"; value = google_cloud_run_v2_service.mod3_agents.uri }
-      env { name = "TX_STREAM_TOPIC"; value = google_pubsub_topic.tx_events.name }
+      resources {
+        limits = {
+          cpu    = "2"
+          memory = "2Gi"
+        }
+      }
+      env {
+        name  = "VAULT_BUCKET"
+        value = var.vault_bucket
+      }
+      env {
+        name  = "GNN_SERVICE_URL"
+        value = google_cloud_run_v2_service.mod2_gnn.uri
+      }
+      env {
+        name  = "REPORTING_SERVICE_URL"
+        value = google_cloud_run_v2_service.mod3_agents.uri
+      }
+      env {
+        name  = "TX_STREAM_TOPIC"
+        value = google_pubsub_topic.tx_events.name
+      }
     }
   }
 }
