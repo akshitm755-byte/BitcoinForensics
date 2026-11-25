@@ -7,8 +7,7 @@ from module2_detection_gnn.src.torch_model import TemporalBitCHetGNet, subgraph_
 
 
 class PyTorchGNNExplainerEngine:
-    """Gradient-based PyTorch GNNExplainer over TemporalBitCHetGNet + Statistical Correlation Profiler."""
-    EXPLAINER_VERSION = "ABI-PyTorch-GNNExplainer-v3.0"
+    EXPLAINER_VERSION = "ABI-PyTorch-GNNExplainer-v4.0"
 
     def __init__(self, model: TemporalBitCHetGNet, steps: int = 28, lr: float = 0.15):
         self.model = model
@@ -75,7 +74,6 @@ class PyTorchGNNExplainerEngine:
         if len(minimal_edges) < min(2, len(valid_edge_ids)):
             minimal_edges = [eid for eid, _ in sorted(edge_mask.items(), key=lambda kv: kv[1], reverse=True)[:min(4, len(valid_edge_ids))]]
 
-        # Compute human-centric statistical summary & z-score deviations vs licit baseline
         mat = x.numpy() if num_nodes > 0 else np.zeros((1, num_feats))
         spacings = [e.temporal_spacing_sec for e in edges if e.temporal_spacing_sec > 0]
         values = [e.value for e in edges]

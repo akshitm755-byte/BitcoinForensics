@@ -1,28 +1,34 @@
 variable "project_id" {
-  type = string
+  description = "GCP Project ID"
+  type        = string
 }
 
 variable "region" {
-  type    = string
-  default = "asia-south1"
+  description = "GCP Region"
+  type        = string
+  default     = "asia-south1"
 }
 
 variable "vault_bucket" {
-  type = string
+  description = "GCS vault bucket for Elliptic++ data, model checkpoints, reports, and PDFs"
+  type        = string
 }
 
 variable "image_tag" {
-  type    = string
-  default = "latest"
+  description = "Docker image tag (commit SHA)"
+  type        = string
+  default     = "latest"
 }
 
 variable "gemini_api_key" {
-  type      = string
-  default   = ""
-  sensitive = true
+  description = "Google AI Studio Gemini API Key (optional; falls back cleanly if blank)"
+  type        = string
+  default     = ""
+  sensitive   = true
 }
 
 variable "gemini_model" {
-  type    = string
-  default = "gemini-3.5-flash-lite"
+  description = "Primary Gemini API model ID for Multi-Agent Documentation"
+  type        = string
+  default     = "gemini-3.8-flash"
 }

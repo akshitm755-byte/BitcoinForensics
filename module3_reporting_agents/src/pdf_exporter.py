@@ -16,8 +16,9 @@ from contracts.schemas import Alert, Report, FEATURE_KEYS
 class ForensicDossierPDFExporter:
     """
     Thread-safe Bureau-Grade Multi-Page Forensic Dossier (.pdf):
-      - Uses isolated matplotlib.figure.Figure + FigureCanvasAgg instances (never global pyplot)
-        so concurrent Cloud Run requests never cross-contaminate charts.
+      - Isolated matplotlib Figure + FigureCanvasAgg per chart (zero cross-thread corruption).
+      - Spacious Historic Cases chart with suptitle, top horizontal legend, and bar annotations.
+      - Section 5: Plain-Language Abstractive Executive Summary box concluding the document.
     """
 
     @classmethod
@@ -43,16 +44,16 @@ class ForensicDossierPDFExporter:
         )
         styles = getSampleStyleSheet()
         title_style = ParagraphStyle("T", parent=styles["Heading1"], fontSize=14, textColor=colors.HexColor("#0f172a"), spaceAfter=4)
-        sub_style = ParagraphStyle("S", parent=styles["Normal"], fontSize=8.5, textColor=colors.HexColor("#475569"), spaceAfter=10)
+        sub_style = ParagraphStyle("S", parent=styles["Normal"], fontSize=8.4, textColor=colors.HexColor("#475569"), spaceAfter=10)
         h2_style = ParagraphStyle("H2", parent=styles["Heading2"], fontSize=11, textColor=colors.HexColor("#1e3a8a"), spaceBefore=8, spaceAfter=6)
-        body_style = ParagraphStyle("B", parent=styles["Normal"], fontSize=8.8, leading=12.5)
-        cell_style = ParagraphStyle("C", parent=styles["Normal"], fontSize=7.8, leading=10)
+        body_style = ParagraphStyle("B", parent=styles["Normal"], fontSize=8.8, leading=12.6)
+        cell_style = ParagraphStyle("C", parent=styles["Normal"], fontSize=7.8, leading=10.2)
 
         story = []
         story.append(Paragraph("AUTONOMOUS BLOCKCHAIN INVESTIGATOR — FORENSIC INTELLIGENCE DOSSIER", title_style))
         story.append(Paragraph(
             f"Report: <b>{report.report_id}</b> &nbsp;|&nbsp; Alert: <b>{report.alert_id}</b> &nbsp;|&nbsp; "
-            f"Correlation: {report.correlation_id} &nbsp;|&nbsp; Synthesis: {report.narrative_engine}",
+            f"Synthesis: <b>{report.narrative_engine}</b> &nbsp;|&nbsp; Trigger: {report.trigger_mode}",
             sub_style
         ))
 
@@ -121,36 +122,36 @@ class ForensicDossierPDFExporter:
         ]))
         story.append(c_tbl)
 
-        # Page 2: Statistical Correlation Visuals
+        # Page 2: Statistical Correlation Visuals + Precedents + Concluding Abstractive Summary
         story.append(PageBreak())
         story.append(Paragraph("3. Quantitative Feature Correlation, Temporal Cadence &amp; Historic Escalation Analytics", h2_style))
         story.append(Paragraph(
-            f"Cadence Algorithm Signature: <b>{alert.cadence_signature}</b> &nbsp;|&nbsp; "
+            f"Cadence Signature: <b>{alert.cadence_signature}</b> &nbsp;|&nbsp; "
             f"Median Inter-Hop Spacing: <b>{report.evidence.statistical_correlations.get('median_inter_hop_sec', 0)}s</b> &nbsp;|&nbsp; "
             f"Fan-Out Deviation vs. Licit Baseline: <b>{report.evidence.statistical_correlations.get('fan_out_z_deviation', 0):+.2f} SD</b>",
             sub_style
         ))
         story.append(Table(
-            [[Image(heatmap_buf, width=3.6 * inch, height=2.75 * inch),
-              Image(scatter_buf, width=3.6 * inch, height=2.75 * inch)]],
+            [[Image(heatmap_buf, width=3.6 * inch, height=2.68 * inch),
+              Image(scatter_buf, width=3.6 * inch, height=2.68 * inch)]],
             colWidths=[3.62 * inch, 3.62 * inch]
         ))
-        story.append(Spacer(1, 10))
-        story.append(Image(cases_buf, width=7.1 * inch, height=2.35 * inch))
-        story.append(Spacer(1, 10))
+        story.append(Spacer(1, 8))
+        story.append(Image(cases_buf, width=7.2 * inch, height=2.65 * inch))
+        story.append(Spacer(1, 8))
 
         story.append(Paragraph("4. OSINT &amp; Historic Cases Scraper Agent — Matched Precedents &amp; Attribution", h2_style))
         if report.evidence.historic_case_matches:
-            h_rows = [["Case ID & Precedent", "Source", "Sim. Index", "Escalation", "Temporal / Pseudorandomization Signature"]]
+            h_rows = [["Case ID & Precedent", "Source", "Sim.", "Esc.", "Temporal / Pseudorandomization Signature"]]
             for m in report.evidence.historic_case_matches:
                 h_rows.append([
-                    Paragraph(f"<b>{m.case_id}</b><br/>{m.case_name} ({m.year})", body_style),
-                    Paragraph(m.source_domain, body_style),
-                    Paragraph(f"<b>{m.similarity_index:.2f}</b>", body_style),
-                    Paragraph(f"<b>{m.escalation_rate:.0%}</b>", body_style),
-                    Paragraph(f"{m.temporal_spacing_pattern}; {m.pseudorandomization_signature}", body_style),
+                    Paragraph(f"<b>{m.case_id}</b><br/>{m.case_name} ({m.year})", cell_style),
+                    Paragraph(m.source_domain, cell_style),
+                    Paragraph(f"<b>{m.similarity_index:.2f}</b>", cell_style),
+                    Paragraph(f"<b>{m.escalation_rate:.0%}</b>", cell_style),
+                    Paragraph(f"{m.temporal_spacing_pattern}; {m.pseudorandomization_signature}", cell_style),
                 ])
-            h_tbl = Table(h_rows, colWidths=[1.85 * inch, 1.15 * inch, 0.7 * inch, 0.75 * inch, 2.75 * inch])
+            h_tbl = Table(h_rows, colWidths=[1.90 * inch, 1.15 * inch, 0.55 * inch, 0.55 * inch, 3.05 * inch])
             h_tbl.setStyle(TableStyle([
                 ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1e293b")),
                 ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
@@ -159,21 +160,38 @@ class ForensicDossierPDFExporter:
                 ("PADDING", (0, 0), (-1, -1), 4),
             ]))
             story.append(h_tbl)
-            story.append(Spacer(1, 8))
+            story.append(Spacer(1, 6))
 
         if report.evidence.attribution_available and report.evidence.doc_refs:
             for d in report.evidence.doc_refs:
                 story.append(Paragraph(
                     f"<b>[{d.doc_id}] {d.source_title}</b> (Entity: <i>{d.entity_id}</i>) — {d.excerpt}",
-                    body_style
+                    cell_style
                 ))
         else:
             story.append(Paragraph(
                 "Direct wallet OSINT attribution is unavailable for this anonymized subgraph (anti-hallucination protocol).",
-                body_style
+                cell_style
             ))
 
-        story.append(Spacer(1, 12))
+        if report.executive_summary:
+            story.append(Spacer(1, 10))
+            story.append(Paragraph("5. Concluding Executive Summary (Plain-Language Investigator Brief)", h2_style))
+            summary_tbl = Table(
+                [[Paragraph(report.executive_summary.replace("σ", " SD"), body_style)]],
+                colWidths=[7.2 * inch],
+            )
+            summary_tbl.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f8fafc")),
+                ("BOX", (0, 0), (-1, -1), 0.85, colors.HexColor("#1e3a8a")),
+                ("LEFTPADDING", (0, 0), (-1, -1), 10),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+                ("TOPPADDING", (0, 0), (-1, -1), 8),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+            ]))
+            story.append(summary_tbl)
+
+        story.append(Spacer(1, 10))
         story.append(Paragraph(
             "<i>Disclaimer: Auditable, source-cited investigative intelligence lead intended to support expert human review. "
             "Not standalone legally admissible evidence.</i>",
@@ -186,16 +204,23 @@ class ForensicDossierPDFExporter:
         if vault_bucket:
             try:
                 from google.cloud import storage
-                blob_name = f"dossiers/{report.report_id}.pdf"
-                storage.Client().bucket(vault_bucket).blob(blob_name).upload_from_filename(local_path)
-                report.pdf_gcs_uri = f"gs://{vault_bucket}/{blob_name}"
+                bucket = storage.Client().bucket(vault_bucket)
+                pdf_blob = f"dossiers/{report.report_id}.pdf"
+                bucket.blob(pdf_blob).upload_from_filename(local_path)
+                report.pdf_gcs_uri = f"gs://{vault_bucket}/{pdf_blob}"
+
+                rep_blob = f"reports/{report.alert_id}.json"
+                report.report_gcs_uri = f"gs://{vault_bucket}/{rep_blob}"
+                bucket.blob(rep_blob).upload_from_string(
+                    report.model_dump_json(), content_type="application/json"
+                )
             except Exception as exc:
-                print(f"[PDFExporter] GCS upload skipped ({exc}); kept local file.")
+                print(f"[PDFExporter] GCS vault upload skipped ({exc}); kept local file.")
 
         return local_path
 
     @staticmethod
-    def _new_figure(figsize: tuple[float, float], dpi: int = 150) -> tuple[Figure, any]:
+    def _new_figure(figsize: tuple[float, float], dpi: int = 150):
         fig = Figure(figsize=figsize, dpi=dpi, facecolor="#090d16")
         FigureCanvas(fig)
         ax = fig.add_subplot(111)
@@ -203,9 +228,10 @@ class ForensicDossierPDFExporter:
         return fig, ax
 
     @staticmethod
-    def _save_figure(fig: Figure) -> io.BytesIO:
+    def _save_figure(fig: Figure, tight: bool = True) -> io.BytesIO:
         buf = io.BytesIO()
-        fig.tight_layout()
+        if tight:
+            fig.tight_layout()
         fig.savefig(buf, format="png", facecolor=fig.get_facecolor())
         buf.seek(0)
         return buf
@@ -256,7 +282,7 @@ class ForensicDossierPDFExporter:
 
     @classmethod
     def _render_correlation_heatmap(cls, alert: Alert) -> io.BytesIO:
-        fig, ax = cls._new_figure((4.5, 3.4))
+        fig, ax = cls._new_figure((4.5, 3.35))
         short_names = ["in_deg", "out_deg", "in_val", "out_val", "dt_min", "fan_out", "hop2"]
         if len(alert.subgraph_nodes) >= 3:
             mat = np.array([[float(n.features.get(k, 0.0)) for k in FEATURE_KEYS] for n in alert.subgraph_nodes])
@@ -281,7 +307,7 @@ class ForensicDossierPDFExporter:
 
     @classmethod
     def _render_temporal_scatter(cls, alert: Alert, report: Report) -> io.BytesIO:
-        fig, ax = cls._new_figure((4.5, 3.4))
+        fig, ax = cls._new_figure((4.5, 3.35))
         rng = np.random.default_rng(7)
         licit_dt = rng.uniform(45, 220, size=35)
         licit_val = np.exp(rng.uniform(-2.8, 0.35, size=35))
@@ -292,11 +318,9 @@ class ForensicDossierPDFExporter:
         for idx, e in enumerate(alert.subgraph_edges):
             dt = e.temporal_spacing_sec if e.temporal_spacing_sec > 0 else float(12 + (idx * 5) % 24)
             if e.edge_id in min_edges:
-                f_dt.append(dt)
-                f_val.append(max(0.05, e.value))
+                f_dt.append(dt); f_val.append(max(0.05, e.value))
             else:
-                o_dt.append(dt)
-                o_val.append(max(0.05, e.value))
+                o_dt.append(dt); o_val.append(max(0.05, e.value))
 
         if o_dt:
             ax.scatter(o_dt, o_val, c="#38bdf8", s=26, alpha=0.85, label="Subgraph Context Edges")
@@ -316,26 +340,43 @@ class ForensicDossierPDFExporter:
 
     @classmethod
     def _render_historic_similarity_chart(cls, report: Report) -> io.BytesIO:
-        fig, ax = cls._new_figure((7.6, 2.5))
+        fig, ax = cls._new_figure((8.0, 3.0))
         matches = report.evidence.historic_case_matches
         if matches:
-            labels = [f"{m.case_name[:28]} ({m.year})" for m in matches]
+            labels = [
+                f"{(m.case_name[:22].rstrip() + '...') if len(m.case_name) > 22 else m.case_name} ({m.year})"
+                for m in matches
+            ]
             sims = [m.similarity_index * 100 for m in matches]
             escs = [m.escalation_rate * 100 for m in matches]
             y = np.arange(len(labels))
             h = 0.34
-            ax.barh(y + h / 2, sims, height=h, color="#38bdf8", label="Vector Similarity Index (%)")
-            ax.barh(y - h / 2, escs, height=h, color="#f59e0b", label="Historic Bureau Escalation Rate (%)")
+
+            b1 = ax.barh(y + h / 2, sims, height=h, color="#38bdf8", label="Vector Similarity Index (%)")
+            b2 = ax.barh(y - h / 2, escs, height=h, color="#f59e0b", label="Historic Bureau Escalation Rate (%)")
+            for bar in list(b1) + list(b2):
+                w = bar.get_width()
+                ax.text(w + 1.5, bar.get_y() + bar.get_height() / 2, f"{w:.0f}%",
+                        va="center", ha="left", color="#e2e8f0", fontsize=7.2)
+
             ax.set_yticks(y)
-            ax.set_yticklabels(labels, color="#e2e8f0", fontsize=7.5)
-            ax.set_xlim(0, 105)
+            ax.set_yticklabels(labels, color="#e2e8f0", fontsize=7.8)
+            ax.set_xlim(0, 114)
             ax.invert_yaxis()
-            ax.legend(facecolor="#0f172a", edgecolor="#334155", labelcolor="#e2e8f0", fontsize=7, loc="lower right")
-        ax.set_xlabel("Percentage (%)", color="#cbd5e1", fontsize=7)
-        ax.set_title("OSINT Scraper Agent — Top Matched Historic Cases: Similarity Index vs. Bureau Escalation Rate", color="#f8fafc", fontsize=8.5, pad=6)
-        ax.tick_params(colors="#cbd5e1", labelsize=7)
+            ax.legend(
+                loc="lower center", bbox_to_anchor=(0.5, 1.02), ncol=2,
+                frameon=False, labelcolor="#cbd5e1", fontsize=7.6
+            )
+
+        fig.suptitle(
+            "OSINT Scraper Agent — Top Matched Historic Cases (Similarity vs. Escalation)",
+            color="#f8fafc", fontsize=9.2, fontweight="bold", y=0.97
+        )
+        ax.set_xlabel("Percentage (%)", color="#94a3b8", fontsize=7.5)
+        ax.tick_params(colors="#cbd5e1", labelsize=7.5)
         for sp in ("top", "right"):
             ax.spines[sp].set_visible(False)
         for sp in ("bottom", "left"):
             ax.spines[sp].set_color("#334155")
-        return cls._save_figure(fig)
+        fig.subplots_adjust(left=0.31, right=0.96, top=0.76, bottom=0.18)
+        return cls._save_figure(fig, tight=False)

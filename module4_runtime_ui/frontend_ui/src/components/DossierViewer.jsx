@@ -4,7 +4,7 @@ export default function DossierViewer({ detail, selectedClaimId, onSelectClaim, 
   if (!detail) {
     return (
       <div style={{ background: "#11141c", border: "1px solid #1e232e", borderRadius: 12, padding: 20, color: "#64748b", fontSize: 13, lineHeight: 1.6 }}>
-        Select a flagged case from the alert queue—or inject an interlaced laundering campaign—to inspect its PyTorch GNNExplainer masks, OSINT historic case similarity index, and downloadable forensic PDF dossier.
+        Select a flagged case from the alert queue—or inject an interlaced laundering campaign—to inspect its PyTorch GNNExplainer masks, OSINT historic case similarity index, LLM abstractive brief, and downloadable PDF dossier.
       </div>
     );
   }
@@ -13,7 +13,7 @@ export default function DossierViewer({ detail, selectedClaimId, onSelectClaim, 
   const topCase = report?.evidence?.historic_case_matches?.[0];
 
   return (
-    <div style={{ background: "#11141c", border: "1px solid #1e232e", borderRadius: 12, padding: 16, display: "flex", flexDirection: "column", gap: 14, maxHeight: 595, overflowY: "auto" }}>
+    <div style={{ background: "#11141c", border: "1px solid #1e232e", borderRadius: 12, padding: 16, display: "flex", flexDirection: "column", gap: 13, maxHeight: 595, overflowY: "auto" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
         <div>
           <div style={{ fontSize: 10.5, color: "#64748b", fontFamily: "'JetBrains Mono', monospace" }}>
@@ -55,16 +55,29 @@ export default function DossierViewer({ detail, selectedClaimId, onSelectClaim, 
 
       {!report ? (
         <div style={{ fontSize: 12, color: "#38bdf8", fontFamily: "'JetBrains Mono', monospace", padding: "12px 0" }}>
-          Running PyTorch GNNExplainer + OSINT Historic Cases Scraper + Compliance Critic...
+          Serverless Pub/Sub triggered -> Running PyTorch GNNExplainer + OSINT Scraper + Gemini Documentation Agent...
         </div>
       ) : (
         <>
+          {/* Plain-Language Abstractive Executive Summary */}
+          {report.executive_summary && (
+            <div style={{ background: "rgba(56,189,248,0.06)", border: "1px solid rgba(56,189,248,0.28)", borderRadius: 8, padding: "10px 12px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9.5, fontFamily: "'JetBrains Mono', monospace", color: "#38bdf8", marginBottom: 4 }}>
+                <span>EXECUTIVE INVESTIGATOR BRIEF</span>
+                <span>{report.narrative_engine.toUpperCase()}</span>
+              </div>
+              <div style={{ fontSize: 12.2, lineHeight: 1.55, color: "#e2e8f0" }}>
+                {report.executive_summary}
+              </div>
+            </div>
+          )}
+
           {/* Historic Case Precedent Highlight Card */}
           {topCase && (
             <div style={{ background: "#0a0c10", border: "1px solid #1e232e", borderRadius: 8, padding: "10px 12px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
                 <span style={{ fontSize: 10, color: "#94a3b8", fontFamily: "'JetBrains Mono', monospace" }}>
-                  OSINT PRECEDENT MATCH ({topCase.source_domain})
+                  OSINT PRECEDENT ({topCase.source_domain})
                 </span>
                 <span style={{ fontSize: 11, fontWeight: 600, fontFamily: "'JetBrains Mono', monospace", color: "#38bdf8" }}>
                   SIM {topCase.similarity_index.toFixed(2)} · ESC {(topCase.escalation_rate * 100).toFixed(0)}%
@@ -79,11 +92,10 @@ export default function DossierViewer({ detail, selectedClaimId, onSelectClaim, 
             </div>
           )}
 
-          {/* Compliance Strip */}
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, fontFamily: "'JetBrains Mono', monospace", color: "#94a3b8", padding: "6px 10px", background: "#0a0c10", borderRadius: 6, border: "1px solid #1e232e" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, fontFamily: "'JetBrains Mono', monospace", color: "#94a3b8", padding: "6px 10px", background: "#0a0c10", borderRadius: 6, border: "1px solid #1e232e" }}>
             <span>CRITIC: <strong style={{ color: "#4ade80" }}>{report.critic_verdict}</strong></span>
             <span>FAITHFUL: <strong style={{ color: "#38bdf8" }}>{(report.faithfulness_score * 100).toFixed(0)}%</strong></span>
-            <span>ENGINE: <strong>{report.narrative_engine.split(":")[0].toUpperCase()}</strong></span>
+            <span>TRIGGER: <strong>{report.trigger_mode.toUpperCase()}</strong></span>
           </div>
 
           {/* Grounded Claims */}

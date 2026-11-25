@@ -7,8 +7,10 @@ from module1_data_pipeline.src.features import ExplicitFeatureBuilder
 
 DEFAULT_ELLIPTIC_PREFIX = "raw/elliptic_pp/Elliptic++ Dataset"
 
+
 class EllipticPlusPlusGCSLoader:
-    """Loads real Elliptic++ CSVs from GCS and rebuilds explicit recomputable features."""
+    """Loads real Elliptic++ CSVs from GCS using positional tuple iteration (immune to reserved 'class' column)."""
+
     def __init__(
         self,
         local_dir: str = "/tmp/elliptic_pp_cache",
@@ -24,8 +26,7 @@ class EllipticPlusPlusGCSLoader:
             return self.local_dir
         from google.cloud import storage
         os.makedirs(self.local_dir, exist_ok=True)
-        client = storage.Client()
-        bucket = client.bucket(self.gcs_bucket)
+        bucket = storage.Client().bucket(self.gcs_bucket)
         required = [
             "txs_classes.csv",
             "txs_edgelist.csv",
@@ -51,34 +52,37 @@ class EllipticPlusPlusGCSLoader:
         tx_cls = pd.read_csv(os.path.join(self.local_dir, "txs_classes.csv"))
         tx_cls.columns = [c.strip() for c in tx_cls.columns]
         tx_id_col, cls_col = tx_cls.columns[0], tx_cls.columns[1]
+        tx_cls[tx_id_col] = tx_cls[tx_id_col].astype(str)
 
         tx_feat = pd.read_csv(os.path.join(self.local_dir, "txs_features.csv"), usecols=[0, 1])
         tx_feat.columns = [tx_id_col, "time_step"]
+        tx_feat[tx_id_col] = tx_feat[tx_id_col].astype(str)
 
         tx_df = tx_feat.merge(tx_cls, on=tx_id_col, how="left")
         if max_txs:
-            # Keep ALL labeled illicit transactions first so minority class (~2%) isn't lost in subsampling
-            illicit_df = tx_df[tx_df[cls_col].astype(str).str.strip() == "1"]
-            other_df = tx_df[tx_df[cls_col].astype(str).str.strip() != "1"]
+            illicit_df = tx_df[tx_df[cls_col].astype(str).str.strip().isin(["1", "1.0"])]
+            other_df = tx_df[~tx_df[cls_col].astype(str).str.strip().isin(["1", "1.0"])]
             rem_quota = max(1000, max_txs - len(illicit_df))
-            other_sub = other_df.sort_values("time_step").groupby("time_step", group_keys=False).apply(
-                lambda df: df.head(max(1, rem_quota // 49))
+            other_sub = (
+                other_df.sort_values("time_step")
+                .groupby("time_step", group_keys=False)
+                .head(max(1, rem_quota // 49))
             )
             tx_df = pd.concat([illicit_df, other_sub], ignore_index=True).drop_duplicates(subset=[tx_id_col])
 
         def map_label(val):
             s = str(val).strip()
-            return 1 if s == "1" else (0 if s == "2" else None)
+            return 1 if s in ("1", "1.0") else (0 if s in ("2", "2.0") else None)
 
         tx_nodes_map = {}
         valid_tx_ids = set()
-        for row in tx_df.itertuples(index=False):
-            tid = str(getattr(row, tx_id_col))
-            ts = int(getattr(row, "time_step")) * 1200
+        for tid_raw, ts_raw, cls_raw in tx_df[[tx_id_col, "time_step", cls_col]].itertuples(index=False, name=None):
+            tid = str(tid_raw)
+            ts = int(float(ts_raw)) * 1200
             nid = f"tx_{tid}"
             valid_tx_ids.add(tid)
             tx_nodes_map[nid] = Node(
-                node_id=nid, node_type=NodeType.TRANSACTION, timestamp=ts, label=map_label(getattr(row, cls_col))
+                node_id=nid, node_type=NodeType.TRANSACTION, timestamp=ts, label=map_label(cls_raw)
             )
 
         edges: List[Edge] = []
@@ -90,8 +94,8 @@ class EllipticPlusPlusGCSLoader:
             c0, c1 = df.columns[0], df.columns[1]
             df[c0], df[c1] = df[c0].astype(str), df[c1].astype(str)
             df = df[df[c0].isin(valid_tx_ids) & df[c1].isin(valid_tx_ids)]
-            for idx, r in enumerate(df.itertuples(index=False)):
-                u, v = f"tx_{getattr(r, c0)}", f"tx_{getattr(r, c1)}"
+            for idx, (u_raw, v_raw) in enumerate(df[[c0, c1]].itertuples(index=False, name=None)):
+                u, v = f"tx_{u_raw}", f"tx_{v_raw}"
                 ts = max(tx_nodes_map[u].timestamp, tx_nodes_map[v].timestamp)
                 edges.append(Edge(
                     edge_id=f"e_txtx_{idx}", source_id=u, target_id=v,
@@ -109,9 +113,9 @@ class EllipticPlusPlusGCSLoader:
                 df[c0], df[c1] = df[c0].astype(str), df[c1].astype(str)
                 tx_col, addr_col = (c1, c0) if is_in else (c0, c1)
                 df = df[df[tx_col].isin(valid_tx_ids)]
-                for idx, r in enumerate(df.itertuples(index=False)):
-                    tid = f"tx_{getattr(r, tx_col)}"
-                    aid = f"addr_{getattr(r, addr_col)}"
+                for idx, (tid_raw, aid_raw) in enumerate(df[[tx_col, addr_col]].itertuples(index=False, name=None)):
+                    tid = f"tx_{tid_raw}"
+                    aid = f"addr_{aid_raw}"
                     ts = tx_nodes_map[tid].timestamp
                     if aid not in addr_nodes_map or ts < addr_nodes_map[aid].timestamp:
                         addr_nodes_map[aid] = Node(

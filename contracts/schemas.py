@@ -170,7 +170,10 @@ class Report(BaseModel):
     completeness_score: float = 1.0
     critic_verdict: str
     narrative_engine: str = "deterministic_grounded"
+    trigger_mode: str = "serverless_pubsub"
+    executive_summary: str = ""
     claims: List[Claim]
     evidence: Evidence
     pdf_gcs_uri: Optional[str] = None
+    report_gcs_uri: Optional[str] = None
     pdf_local_path: Optional[str] = None

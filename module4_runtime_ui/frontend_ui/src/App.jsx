@@ -65,16 +65,15 @@ export default function App() {
 
   const streamRunning = state?.stream?.running || false;
   const alerts = state?.alerts || [];
-  const trained = state?.stream?.checkpoint_status === "TRAINED_GCS_CHECKPOINT";
+  const trained = String(state?.stream?.checkpoint_status || "").startsWith("TRAINED");
 
   return (
     <div style={{ minHeight: "100vh", padding: "16px 20px", display: "flex", flexDirection: "column", gap: 14, maxWidth: 1680, margin: "0 auto" }}>
-      {/* Minimalist Top Header */}
       <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, background: "#11141c", border: "1px solid #1e232e", padding: "12px 18px", borderRadius: 12 }}>
         <div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ fontSize: 15, fontWeight: 700, letterSpacing: "-0.01em", color: "#f8fafc" }}>
-              ABI Forensics
+              ABI Forensics v4
             </span>
             <span
               style={{
@@ -84,6 +83,14 @@ export default function App() {
               }}
             >
               {state?.stream?.checkpoint_status || "CONNECTING"}
+            </span>
+            <span
+              style={{
+                fontSize: 10, fontFamily: "'JetBrains Mono', monospace", padding: "2px 7px", borderRadius: 99,
+                background: "rgba(56,189,248,0.12)", color: "#38bdf8",
+              }}
+            >
+              {state?.stream?.reporting_dispatch || "SERVERLESS"}
             </span>
           </div>
           <div style={{ fontSize: 11, color: "#64748b", fontFamily: "'JetBrains Mono', monospace", marginTop: 3 }}>
@@ -136,16 +143,14 @@ export default function App() {
         </div>
       </header>
 
-      {/* Main 3-Pane Forensics Workspace */}
-      <div style={{ display: "grid", gridTemplateColumns: "265px 1fr 425px", gap: 14, alignItems: "start" }}>
-        {/* Left: Ranked Alert Queue */}
+      <div style={{ display: "grid", gridTemplateColumns: "265px 1fr 430px", gap: 14, alignItems: "start" }}>
         <aside style={{ background: "#11141c", border: "1px solid #1e232e", borderRadius: 12, padding: 14, maxHeight: 595, overflowY: "auto" }}>
           <div style={{ fontSize: 10.5, fontFamily: "'JetBrains Mono', monospace", color: "#64748b", marginBottom: 10 }}>
             ALERT QUEUE ({alerts.length})
           </div>
           {alerts.length === 0 && (
             <div style={{ fontSize: 12, color: "#64748b", lineHeight: 1.55 }}>
-              Stream idle. Start the interlaced AMLSim feed or inject a laundering campaign to observe multi-hop detection across licit traffic.
+              Stream idle. Start the interlaced AMLSim feed or inject a laundering campaign to trigger serverless multi-agent analysis.
             </div>
           )}
           {alerts.map((a) => {
@@ -170,7 +175,7 @@ export default function App() {
                 </div>
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, fontFamily: "'JetBrains Mono', monospace", marginTop: 5 }}>
                   <span style={{ color: a.has_report ? "#4ade80" : "#38bdf8" }}>
-                    {a.has_report ? "● PDF READY" : "◌ EXPLAINING…"}
+                    {a.has_report ? "● PDF READY" : "◌ SERVERLESS…"}
                   </span>
                   {a.top_similarity && <span style={{ color: "#94a3b8" }}>SIM {a.top_similarity.toFixed(2)}</span>}
                 </div>
@@ -179,7 +184,6 @@ export default function App() {
           })}
         </aside>
 
-        {/* Center: Dynamic Interactable Graph + Clickable Feature Insight Window */}
         <main>
           <LiveExpandingGraph
             incomingBatch={state?.latest_batch}
@@ -190,7 +194,6 @@ export default function App() {
           />
         </main>
 
-        {/* Right: Dossier, Historic Similarity & Provenance Panel */}
         <section>
           <DossierViewer
             detail={alertDetail}

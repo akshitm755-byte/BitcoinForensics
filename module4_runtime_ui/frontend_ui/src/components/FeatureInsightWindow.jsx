@@ -15,10 +15,6 @@ function formatTs(ts) {
   return new Date(ts * 1000).toISOString().replace("T", " ").slice(0, 19) + " UTC";
 }
 
-/**
- * Timestamped Feature Insight Window:
- * Appears whenever an investigator clicks a node or an edge on the dynamic graph.
- */
 export default function FeatureInsightWindow({ item, evidenceMask, baselines = {}, onClose }) {
   if (!item) return null;
 
@@ -34,17 +30,11 @@ export default function FeatureInsightWindow({ item, evidenceMask, baselines = {
   return (
     <div
       style={{
-        position: "absolute",
-        bottom: 14,
-        left: 14,
-        width: 345,
-        background: "rgba(15, 18, 25, 0.96)",
-        backdropFilter: "blur(12px)",
+        position: "absolute", bottom: 14, left: 14, width: 345,
+        background: "rgba(15, 18, 25, 0.96)", backdropFilter: "blur(12px)",
         border: `1px solid ${isFlagged ? "rgba(244,63,94,0.55)" : "rgba(148,163,184,0.22)"}`,
-        borderRadius: 12,
-        padding: "14px 16px",
-        boxShadow: "0 16px 40px rgba(0,0,0,0.65)",
-        zIndex: 20,
+        borderRadius: 12, padding: "14px 16px",
+        boxShadow: "0 16px 40px rgba(0,0,0,0.65)", zIndex: 20,
       }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
@@ -52,21 +42,15 @@ export default function FeatureInsightWindow({ item, evidenceMask, baselines = {
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
             <span
               style={{
-                fontSize: 10,
-                fontFamily: "'JetBrains Mono', monospace",
-                padding: "2px 6px",
-                borderRadius: 4,
+                fontSize: 10, fontFamily: "'JetBrains Mono', monospace", padding: "2px 6px", borderRadius: 4,
                 background: isFlagged ? "rgba(244,63,94,0.16)" : "rgba(56,189,248,0.14)",
-                color: isFlagged ? "#fb7185" : "#38bdf8",
-                fontWeight: 600,
+                color: isFlagged ? "#fb7185" : "#38bdf8", fontWeight: 600,
               }}
             >
               {isNode ? data.node_type.toUpperCase() : data.edge_type.toUpperCase()}
             </span>
             {isFlagged && (
-              <span style={{ fontSize: 10, color: "#fb7185", fontFamily: "'JetBrains Mono', monospace" }}>
-                ● EXPLAINER CORE
-              </span>
+              <span style={{ fontSize: 10, color: "#fb7185", fontFamily: "'JetBrains Mono', monospace" }}>● EXPLAINER CORE</span>
             )}
           </div>
           <div style={{ fontSize: 12.5, fontWeight: 600, fontFamily: "'JetBrains Mono', monospace", color: "#f8fafc", wordBreak: "break-all" }}>
@@ -76,31 +60,12 @@ export default function FeatureInsightWindow({ item, evidenceMask, baselines = {
             {formatTs(data.timestamp)}
           </div>
         </div>
-        <button
-          onClick={onClose}
-          style={{
-            background: "transparent", border: "none", color: "#94a3b8",
-            fontSize: 16, cursor: "pointer", padding: "0 4px", lineHeight: 1,
-          }}
-        >
+        <button onClick={onClose} style={{ background: "transparent", border: "none", color: "#94a3b8", fontSize: 16, cursor: "pointer", padding: "0 4px", lineHeight: 1 }}>
           ×
         </button>
       </div>
 
-      {/* Key Metrics Strip */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 1fr",
-          gap: 8,
-          marginTop: 10,
-          marginBottom: 10,
-          padding: "8px 10px",
-          background: "#0a0c10",
-          borderRadius: 8,
-          border: "1px solid #1e232e",
-        }}
-      >
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10, marginBottom: 10, padding: "8px 10px", background: "#0a0c10", borderRadius: 8, border: "1px solid #1e232e" }}>
         <div>
           <div style={{ fontSize: 9.5, color: "#64748b", textTransform: "uppercase" }}>Explainer Mask</div>
           <div style={{ fontSize: 13, fontWeight: 600, fontFamily: "'JetBrains Mono', monospace", color: isFlagged ? "#fb7185" : "#e2e8f0" }}>
@@ -112,9 +77,7 @@ export default function FeatureInsightWindow({ item, evidenceMask, baselines = {
             {isNode ? "In-Graph Memory ||m||" : "Value / Spacing"}
           </div>
           <div style={{ fontSize: 13, fontWeight: 600, fontFamily: "'JetBrains Mono', monospace", color: "#38bdf8" }}>
-            {isNode
-              ? (data.memory_norm ?? 0).toFixed(3)
-              : `${data.value} BTC · ${data.temporal_spacing_sec || 0}s`}
+            {isNode ? (data.memory_norm ?? 0).toFixed(3) : `${data.value} BTC · ${data.temporal_spacing_sec || 0}s`}
           </div>
         </div>
       </div>

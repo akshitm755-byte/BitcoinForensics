@@ -1,4 +1,4 @@
-name: CI — Contracts, Leakage, In-Graph Memory & Scraper Verification
+name: CI — ABI v4 Verification Gate
 
 on:
   pull_request:
@@ -19,5 +19,5 @@ jobs:
           pip install --extra-index-url https://download.pytorch.org/whl/cpu torch==2.3.1+cpu
           pip install pydantic networkx numpy pandas matplotlib reportlab fastapi httpx pytest
           pip install -e ./contracts
-      - name: Run Full v3 Verification Suite
-        run: pytest tests/test_v3_full_pipeline.py -v
+      - name: Run Full v4 Verification Suite
+        run: pytest tests/test_v4_full_pipeline.py -v

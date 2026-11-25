@@ -4,17 +4,11 @@ from typing import Dict, List, Optional, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from contracts.schemas import Node, Edge, NodeType, Typology, IDX_TO_TYPOLOGY, FEATURE_KEYS
+from contracts.schemas import Node, Edge, NodeType, FEATURE_KEYS
 from module1_data_pipeline.src.features import ExplicitFeatureBuilder
 
 
 class HeteroMemorySAGEBlock(nn.Module):
-    """
-    Bit-CHetG heterogeneous SAGE block upgraded with In-Graph Neighborhood Memory Reading:
-    During message passing, each node aggregates both its neighbors' current features AND
-    their stored temporal memory vectors (`prev_mem`) via a learned memory gate—allowing brand-new
-    transactions in an interlaced laundering campaign to inherit relational history immediately!
-    """
     def __init__(self, hidden_dim: int):
         super().__init__()
         self.lin_self_tx = nn.Linear(hidden_dim, hidden_dim)
@@ -71,12 +65,6 @@ class HeteroMemorySAGEBlock(nn.Module):
 
 
 class InGraphMotifMemoryBank(nn.Module):
-    """
-    Learnable In-Graph Structural Motif Memory Bank (K prototype slots).
-    Stores recurring laundering topology signatures directly inside the GNN so subgraphs
-    cross-attend against stored laundering motifs, yielding both an enriched memory vector
-    and an interpretable `matched_motif_slot` + `activation_strength`.
-    """
     def __init__(self, hidden_dim: int, num_slots: int = 8):
         super().__init__()
         self.num_slots = num_slots
@@ -100,7 +88,6 @@ class InGraphMotifMemoryBank(nn.Module):
 
 
 class AmatricianaMemoryCell(nn.Module):
-    """Continuous exponential time-decay + chronological GRU sequence memory (Amatriciana style)."""
     def __init__(self, hidden_dim: int):
         super().__init__()
         self.raw_decay = nn.Parameter(torch.tensor(0.22))
@@ -129,14 +116,6 @@ class AmatricianaMemoryCell(nn.Module):
 
 
 class TemporalBitCHetGNet(nn.Module):
-    """
-    v3 Full Hybrid Deep Learning Architecture:
-      1. Bit-CHetG Heterogeneous Encoders (TSE + AFA)
-      2. Amatriciana Time-Decay Sequential GRU Memory
-      3. In-Graph Memory (Neighborhood Memory Reading + Motif Memory Bank)
-      4. Supervised Contrastive + Risk + 5-Class Typology Head
-    Supports 3-way ablation toggles (`enable_memory`, `enable_in_graph_memory`).
-    """
     def __init__(self, in_dim: int = len(FEATURE_KEYS), hidden_dim: int = 32, num_typologies: int = 5):
         super().__init__()
         self.in_dim = in_dim
@@ -149,7 +128,6 @@ class TemporalBitCHetGNet(nn.Module):
         self.memory_cell = AmatricianaMemoryCell(hidden_dim)
         self.motif_bank = InGraphMotifMemoryBank(hidden_dim, num_slots=8)
 
-        # [TSE || AFA || Amatriciana_Seq_Memory || InGraph_Motif_Memory]
         fused_dim = hidden_dim * 4
         self.fusion = nn.Sequential(
             nn.Linear(fused_dim, hidden_dim * 2),
@@ -273,22 +251,29 @@ class FocalContrastiveLoss(nn.Module):
 
 def load_model_from_gcs_or_init(
     vault_bucket: Optional[str] = None,
-    blob_path: str = "models/temporal_bitchetg_v3.pt",
-    local_cache: str = "/tmp/temporal_bitchetg_v3.pt",
+    blob_path: str = "models/temporal_bitchetg_v4.pt",
+    fallback_blob_path: str = "models/temporal_bitchetg_v3.pt",
+    local_cache: str = "/tmp/temporal_bitchetg_active.pt",
 ) -> Tuple[TemporalBitCHetGNet, str]:
+    """Loads v4 checkpoint if present in GCS, else seamlessly reuses already-trained v3 checkpoint."""
     model = TemporalBitCHetGNet()
     if vault_bucket:
         try:
             from google.cloud import storage
-            blob = storage.Client().bucket(vault_bucket).blob(blob_path)
-            if blob.exists():
-                blob.download_to_filename(local_cache)
-                state = torch.load(local_cache, map_location="cpu")
-                model.load_state_dict(state["model_state_dict"] if "model_state_dict" in state else state)
-                model.eval()
-                return model, "TRAINED_GCS_CHECKPOINT"
+            bucket = storage.Client().bucket(vault_bucket)
+            for candidate in [blob_path, fallback_blob_path]:
+                if not candidate:
+                    continue
+                blob = bucket.blob(candidate)
+                if blob.exists():
+                    blob.download_to_filename(local_cache)
+                    state = torch.load(local_cache, map_location="cpu")
+                    model.load_state_dict(state["model_state_dict"] if "model_state_dict" in state else state)
+                    model.eval()
+                    tag = "TRAINED_GCS_V4" if "v4" in candidate else "TRAINED_GCS_CHECKPOINT"
+                    return model, tag
         except Exception as exc:
-            print(f"[ModelLoader] GCS checkpoint not found yet ({exc}); booting Day-1 fallback.")
+            print(f"[ModelLoader] GCS checkpoint not loaded ({exc}); booting fallback.")
 
     if os.path.exists(local_cache):
         state = torch.load(local_cache, map_location="cpu")

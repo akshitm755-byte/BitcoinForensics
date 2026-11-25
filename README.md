@@ -1,17 +1,19 @@
-# Autonomous Blockchain Investigator (ABI) v3 — Cloud-Native Forensics Platform
+# Autonomous Blockchain Investigator (ABI) v4 — Multi-Agentic & Serverless Forensics Platform
 
-## What's New in v3
-1. **In-Graph Structural Memory + Amatriciana Temporal Memory (`TemporalBitCHetGNet`)**:
-   - Combines Bit-CHetG heterogeneous SAGE blocks (TSE + AFA), Amatriciana continuous time-decay `GRUCell` memory, AND an **In-Graph Memory Bank** (neighborhood temporal memory aggregation + learnable motif prototype slots) so newly arriving transactions read persistent relational state across multi-hop campaigns.
-   - Includes a **3-Way Scientific Ablation** in `training/train_elliptic_pp_gpu.py`:
-     1. `Static Bit-CHetG` (no memory)
-     2. `Temporal Bit-CHetG + Amatriciana` (node decay memory)
-     3. `Full Hybrid: Bit-CHetG + Amatriciana + In-Graph Memory`
-2. **Realistic Interlaced AMLSim Stream (`module1_data_pipeline/src/amlsim_stream.py`)**:
-   - Low realistic baseline illicit rate (~4–6% campaign prevalence) with **multi-transaction illicit attempts interlaced between genuine licit transactions** using pseudorandomized temporal spacing (log-normal jitter, Poisson bursts, uniform peel cadence).
-3. **Minimalist Bureau Forensics UI (`module4_runtime_ui/frontend_ui/`)**:
-   - Clean dark-mode interface (`Inter` & `JetBrains Mono`) with a **dynamic, pan/zoomable, clickable graph topology**.
-   - Clicking **any node or edge** opens a **Timestamped Feature Insight Window** with node/edge importance masks, memory norms, feature deviations vs. licit baseline, and plain-English forensic diagnostics.
-4. **GNNExplainer + OSINT & Historic Cases Scraper Agent + Vector RAG + Gemini LLM + Rich Visual PDF Dossiers (`module3_reporting_agents/`)**:
-   - Live/cached OSINT & Historic Cases Scraper (`api.llama.fi/hacks` + curated crypto-forensics registry) with **cosine similarity indexing** and **historic bureau escalation rate correlation**.
-   - Generates multi-page PDF dossiers containing: Minimal Flagged Subgraph, Feature Attribution Bars, **Feature Correlation Heatmap**, **Temporal Spacing vs. Value Scatter Plot**, **Historic Case Similarity & Escalation Chart**, and Compliance-Critic-verified prose.
+Temporal Heterogeneous GNN (**Bit-CHetG + Amatriciana + In-Graph Memory**) with **Serverless Pub/Sub-Triggered Multi-Agent Reporting** (**PyTorch GNNExplainer + OSINT Historic Cases Scraper + RAG + Gemini 3.8 Flash Documentation Agent + Compliance Critic**), **Interlaced AMLSim Streaming**, and **Bureau-Grade Multi-Chart PDF Dossiers** on **GCP Cloud Run**.
+
+## What's New in v4
+1. **True Event-Driven Serverless Module 3 (GCP Pub/Sub Push -> Cloud Run)**:
+   - `mod4-investigator-dashboard` publishes flagged `Alert` payloads to `aml-alerts-queue` (Cloud Pub/Sub).
+   - A Terraform-managed **Pub/Sub Push Subscription** wakes up `mod3-reporting-agents` (`/pubsub/explain-and-report`) serverlessly with automatic retry backoff, scaling from `0 -> N -> 0`.
+   - `mod3` persists sealed `Report` JSON + multi-page `.pdf` dossiers to GCS (`gs://<vault>/reports/` & `dossiers/`), eliminating circular service dependencies.
+2. **Gemini 3.8 Flash Multi-Agent Documentation + Abstractive Executive Summary**:
+   - Uses `gemini-3.8-flash` (with automatic `gemini-3.5-flash-lite` and grounded deterministic fallback) when `GEMINI_API_KEY` is added to GitHub Secrets.
+   - Generates both **Compliance-Critic-verified evidence claims** (`Evidence.resolve()`) AND a unique, plain-English **Concluding Executive Summary** explaining the attack in accessible human language.
+3. **Thread-Safe Multi-Chart PDFs & Un-Squeezed Historic Cases Chart**:
+   - Eliminates concurrent Matplotlib race conditions via isolated `FigureCanvasAgg` objects.
+   - Fixes title clipping and legend overlap on the OSINT Historic Cases Similarity vs. Escalation chart, adds direct bar labels, and renders Section 5 (Executive Summary Brief).
+4. **Differentiated OSINT Similarity Index**:
+   - Combines cosine alignment + normalized Euclidean distance decay across hack technique, classification, volume, and temporal cadence so live DeFiLlama records and historic AML precedents produce realistic, distinct similarity indices.
+5. **Backwards-Compatible Checkpoint Loading & Validation-Calibrated Ablation**:
+   - Automatically loads `models/temporal_bitchetg_v4.pt` if present, or falls back seamlessly to your already-trained `models/temporal_bitchetg_v3.pt` in GCS—zero forced retraining required on deploy!

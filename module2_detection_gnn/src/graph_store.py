@@ -6,10 +6,6 @@ from module1_data_pipeline.src.features import ExplicitFeatureBuilder
 
 
 class IncrementalGraphStore:
-    """
-    Live heterogeneous graph store with persistent per-node temporal memory vectors
-    AND edge-level temporal spacing tracking for interlaced multi-hop campaign detection.
-    """
     def __init__(self, memory_dim: int = 32, max_window_seconds: int = 2400):
         self.g = nx.MultiDiGraph()
         self.nodes: Dict[str, Node] = {}

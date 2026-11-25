@@ -1,12 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import FeatureInsightWindow from "./FeatureInsightWindow";
 
-/**
- * Dynamic, Interactable Forensics Graph Topology:
- * - Supports "Live Interlaced Stream" (sprout & fade) OR "Alert Subgraph Focus" mode.
- * - Clickable nodes & edges open the Timestamped Feature Insight Window.
- * - Smooth drag-to-reposition nodes + zoom in/out/reset controls.
- */
 export default function LiveExpandingGraph({
   incomingBatch,
   focusedAlert,
@@ -14,7 +8,7 @@ export default function LiveExpandingGraph({
   highlightedRefs = [],
   baselines = {},
 }) {
-  const [viewMode, setViewMode] = useState("live"); // "live" | "alert"
+  const [viewMode, setViewMode] = useState("live");
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
   const [generation, setGeneration] = useState(0);
@@ -24,7 +18,6 @@ export default function LiveExpandingGraph({
   const svgRef = useRef(null);
   const lastBatchIdRef = useRef(null);
 
-  // Switch automatically to live updates when incomingBatch arrives in live mode
   useEffect(() => {
     if (!incomingBatch || incomingBatch.batch_id === lastBatchIdRef.current) return;
     lastBatchIdRef.current = incomingBatch.batch_id;
@@ -69,19 +62,13 @@ export default function LiveExpandingGraph({
     });
   }, [incomingBatch]);
 
-  // Compute radial layout for focused alert subgraph
   const displayNodes = React.useMemo(() => {
     if (viewMode === "alert" && focusedAlert) {
       const sub = focusedAlert.subgraph_nodes || [];
       return sub.map((n, idx) => {
         const ring = n.node_type === "transaction" ? 95 : 185;
         const angle = (2 * Math.PI * idx) / Math.max(1, sub.length);
-        return {
-          ...n,
-          bornGen: generation,
-          x: 390 + Math.cos(angle) * ring,
-          y: 260 + Math.sin(angle) * ring,
-        };
+        return { ...n, bornGen: generation, x: 390 + Math.cos(angle) * ring, y: 260 + Math.sin(angle) * ring };
       });
     }
     return nodes;
@@ -102,15 +89,7 @@ export default function LiveExpandingGraph({
   };
 
   return (
-    <div
-      style={{
-        position: "relative",
-        background: "#11141c",
-        border: "1px solid #1e232e",
-        borderRadius: 12,
-        padding: 14,
-      }}
-    >
+    <div style={{ position: "relative", background: "#11141c", border: "1px solid #1e232e", borderRadius: 12, padding: 14 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 8 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <button
@@ -173,18 +152,10 @@ export default function LiveExpandingGraph({
             const isSel = selectedItem?.kind === "edge" && selectedItem.data.edge_id === e.edge_id;
             const opacity = isFlag || isClaim || isSel ? 0.96 : Math.max(0.14, 0.85 - age * 0.12);
             return (
-              <g
-                key={e.edge_id}
-                style={{ cursor: "pointer" }}
-                onClick={() => setSelectedItem({ kind: "edge", data: e })}
-              >
-                {/* Invisible wider hit target so clicking edges is effortless */}
+              <g key={e.edge_id} style={{ cursor: "pointer" }} onClick={() => setSelectedItem({ kind: "edge", data: e })}>
                 <line x1={src.x} y1={src.y} x2={dst.x} y2={dst.y} stroke="transparent" strokeWidth={12} />
                 <line
-                  x1={src.x}
-                  y1={src.y}
-                  x2={dst.x}
-                  y2={dst.y}
+                  x1={src.x} y1={src.y} x2={dst.x} y2={dst.y}
                   stroke={isSel ? "#ffffff" : isClaim ? "#fbbf24" : isFlag ? "#f43f5e" : "#334155"}
                   strokeWidth={isSel || isClaim ? 3.2 : isFlag ? 2.2 : 1.15}
                   strokeOpacity={opacity}
@@ -199,13 +170,7 @@ export default function LiveExpandingGraph({
             const isFlag = minNodes.has(n.node_id);
             const isSel = selectedItem?.kind === "node" && selectedItem.data.node_id === n.node_id;
             const opacity = isFlag || isClaim || isSel ? 1.0 : Math.max(0.16, 0.94 - age * 0.12);
-            const fill = isClaim
-              ? "#fbbf24"
-              : isFlag
-              ? "#f43f5e"
-              : n.node_type === "transaction"
-              ? "#38bdf8"
-              : "#a78bfa";
+            const fill = isClaim ? "#fbbf24" : isFlag ? "#f43f5e" : n.node_type === "transaction" ? "#38bdf8" : "#a78bfa";
 
             return (
               <g
@@ -213,18 +178,10 @@ export default function LiveExpandingGraph({
                 transform={`translate(${n.x}, ${n.y})`}
                 style={{ cursor: "pointer", opacity, transition: "opacity 0.45s ease" }}
                 onMouseDown={() => viewMode === "live" && setDraggingId(n.node_id)}
-                onClick={(ev) => {
-                  ev.stopPropagation();
-                  setSelectedItem({ kind: "node", data: n });
-                }}
+                onClick={(ev) => { ev.stopPropagation(); setSelectedItem({ kind: "node", data: n }); }}
               >
                 {(isFlag || isClaim || isSel) && <circle r={18} fill="url(#flagGlow)" />}
-                <circle
-                  r={isSel ? 8.5 : isFlag || isClaim ? 7 : 5}
-                  fill={fill}
-                  stroke={isSel ? "#ffffff" : "#e2e8f0"}
-                  strokeWidth={isSel ? 2.2 : 1.0}
-                />
+                <circle r={isSel ? 8.5 : isFlag || isClaim ? 7 : 5} fill={fill} stroke={isSel ? "#ffffff" : "#e2e8f0"} strokeWidth={isSel ? 2.2 : 1.0} />
                 <text x={10} y={3.5} fill="#cbd5e1" fontSize="8.8" fontFamily="'JetBrains Mono', monospace">
                   {n.node_id.length > 18 ? n.node_id.slice(0, 17) + "…" : n.node_id}
                 </text>
@@ -235,7 +192,7 @@ export default function LiveExpandingGraph({
       </svg>
 
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: "#64748b", marginTop: 8 }}>
-        <span>Click any node or edge to open its timestamped feature insight profile. Drag nodes in Live mode to inspect.</span>
+        <span>Click any node or edge to open its timestamped feature insight profile. Drag nodes in Live mode.</span>
         <span style={{ fontFamily: "'JetBrains Mono', monospace" }}>
           <span style={{ color: "#f43f5e" }}>● Explainer</span> &nbsp;
           <span style={{ color: "#38bdf8" }}>● Tx</span> &nbsp;
@@ -243,12 +200,7 @@ export default function LiveExpandingGraph({
         </span>
       </div>
 
-      <FeatureInsightWindow
-        item={selectedItem}
-        evidenceMask={evidenceMask}
-        baselines={baselines}
-        onClose={() => setSelectedItem(null)}
-      />
+      <FeatureInsightWindow item={selectedItem} evidenceMask={evidenceMask} baselines={baselines} onClose={() => setSelectedItem(null)} />
     </div>
   );
 }

@@ -12,11 +12,14 @@ from fastapi.staticfiles import StaticFiles
 from contracts.schemas import Alert, Report, Typology, LICIT_FEATURE_BASELINES
 from module1_data_pipeline.src.amlsim_stream import AMLSimStreamGenerator
 
-app = FastAPI(title="Module 4 — Investigator Forensics Runtime & Interlaced AMLSim Streamer")
+app = FastAPI(title="Module 4 — Investigator Forensics Runtime & Serverless Pub/Sub Coordinator")
 
+GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID", "")
 VAULT_BUCKET = os.getenv("VAULT_BUCKET", "")
 GNN_SERVICE_URL = os.getenv("GNN_SERVICE_URL", "http://localhost:8002").rstrip("/")
 REPORTING_SERVICE_URL = os.getenv("REPORTING_SERVICE_URL", "http://localhost:8003").rstrip("/")
+ALERT_PUBSUB_TOPIC = os.getenv("ALERT_PUBSUB_TOPIC", "aml-alerts-queue")
+ENABLE_PUBSUB_TRIGGER = os.getenv("ENABLE_PUBSUB_TRIGGER", "false").lower() == "true"
 
 streamer = AMLSimStreamGenerator(illicit_campaign_prob=0.055)
 STREAM_STATE = {
@@ -26,6 +29,7 @@ STREAM_STATE = {
     "illicit_events_seen": 0,
     "interlaced_pending_hops": 0,
     "checkpoint_status": "CONNECTING",
+    "reporting_dispatch": "SERVERLESS_PUBSUB" if (ENABLE_PUBSUB_TRIGGER and GCP_PROJECT_ID) else "DIRECT_HTTP",
 }
 
 ALERTS_DB: Dict[str, Alert] = {}
@@ -35,6 +39,25 @@ AUDIT_TRACES: Dict[str, List[dict]] = {}
 DETECTION_LATENCIES_MS: List[float] = []
 RECENT_GRAPH_BATCHES: List[dict] = []
 
+_pubsub_publisher = None
+_gcs_client = None
+
+
+def _get_pubsub_publisher():
+    global _pubsub_publisher
+    if _pubsub_publisher is None:
+        from google.cloud import pubsub_v1
+        _pubsub_publisher = pubsub_v1.PublisherClient()
+    return _pubsub_publisher
+
+
+def _get_gcs_client():
+    global _gcs_client
+    if _gcs_client is None:
+        from google.cloud import storage
+        _gcs_client = storage.Client()
+    return _gcs_client
+
 
 def record_audit_trace(correlation_id: str, stage: str, payload: dict):
     raw = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
@@ -43,6 +66,65 @@ def record_audit_trace(correlation_id: str, stage: str, payload: dict):
         "timestamp_ms": int(time.time() * 1000),
         "sha256_hash": hashlib.sha256(raw).hexdigest(),
     })
+
+
+def _register_verified_report(alert: Alert, rep: Report) -> bool:
+    for clm in rep.claims:
+        if not all(rep.evidence.resolve(r) for r in clm.evidence_refs):
+            record_audit_trace(rep.correlation_id, "CONTRACT_VIOLATION_REJECTED", {"claim": clm.claim_id})
+            return False
+    REPORTS_DB[rep.report_id] = rep
+    REPORTS_BY_ALERT[alert.alert_id] = rep
+    record_audit_trace(
+        rep.correlation_id,
+        "REPORT_SEALED",
+        {"report_id": rep.report_id, "engine": rep.narrative_engine, "trigger": rep.trigger_mode},
+    )
+    return True
+
+
+def _try_pull_report_from_gcs(alert: Alert) -> Optional[Report]:
+    if not VAULT_BUCKET or alert.alert_id in REPORTS_BY_ALERT:
+        return REPORTS_BY_ALERT.get(alert.alert_id)
+    try:
+        blob = _get_gcs_client().bucket(VAULT_BUCKET).blob(f"reports/{alert.alert_id}.json")
+        if blob.exists():
+            rep = Report(**json.loads(blob.download_as_text()))
+            if _register_verified_report(alert, rep):
+                return rep
+    except Exception:
+        pass
+    return None
+
+
+async def dispatch_alert_to_module3(alert: Alert):
+    # Path A: True Serverless Event-Driven Pub/Sub Push Trigger
+    if ENABLE_PUBSUB_TRIGGER and GCP_PROJECT_ID and VAULT_BUCKET:
+        try:
+            pub = _get_pubsub_publisher()
+            topic_path = pub.topic_path(GCP_PROJECT_ID, ALERT_PUBSUB_TOPIC)
+            msg_bytes = alert.model_dump_json().encode("utf-8")
+            future = pub.publish(topic_path, msg_bytes, alert_id=alert.alert_id, correlation_id=alert.correlation_id)
+            msg_id = await asyncio.to_thread(future.result, 10)
+            record_audit_trace(alert.correlation_id, "PUBSUB_PUBLISHED_SERVERLESS", {"message_id": msg_id})
+            # Poll GCS vault briefly so UI updates automatically once serverless Module 3 seals the report
+            for _ in range(30):
+                await asyncio.sleep(1.2)
+                if _try_pull_report_from_gcs(alert) is not None:
+                    return
+            return
+        except Exception as exc:
+            record_audit_trace(alert.correlation_id, "PUBSUB_FALLBACK_TO_HTTP", {"error": str(exc)})
+
+    # Path B: Direct HTTP fallback (local dev or if Pub/Sub unavailable)
+    try:
+        async with httpx.AsyncClient(timeout=55.0) as client:
+            resp = await client.post(f"{REPORTING_SERVICE_URL}/explain-and-report", json=alert.model_dump())
+            resp.raise_for_status()
+            rep = Report(**resp.json())
+            _register_verified_report(alert, rep)
+    except Exception as exc:
+        record_audit_trace(alert.correlation_id, "REPORT_GENERATION_ERROR", {"error": str(exc)})
 
 
 async def process_one_event():
@@ -79,7 +161,7 @@ async def process_one_event():
             "nodes": [n.model_dump() for n in alert.subgraph_nodes],
             "edges": [e.model_dump() for e in alert.subgraph_edges],
         })
-        asyncio.create_task(fetch_report_for_alert(alert))
+        asyncio.create_task(dispatch_alert_to_module3(alert))
     else:
         RECENT_GRAPH_BATCHES.append({
             "batch_id": STREAM_STATE["events_processed"],
@@ -93,23 +175,6 @@ async def process_one_event():
 
     if len(RECENT_GRAPH_BATCHES) > 30:
         RECENT_GRAPH_BATCHES.pop(0)
-
-
-async def fetch_report_for_alert(alert: Alert):
-    try:
-        async with httpx.AsyncClient(timeout=55.0) as client:
-            resp = await client.post(f"{REPORTING_SERVICE_URL}/explain-and-report", json=alert.model_dump())
-            resp.raise_for_status()
-            rep = Report(**resp.json())
-            for clm in rep.claims:
-                if not all(rep.evidence.resolve(r) for r in clm.evidence_refs):
-                    record_audit_trace(rep.correlation_id, "CONTRACT_VIOLATION_REJECTED", {"claim": clm.claim_id})
-                    return
-            REPORTS_DB[rep.report_id] = rep
-            REPORTS_BY_ALERT[alert.alert_id] = rep
-            record_audit_trace(rep.correlation_id, "REPORT_SEALED", {"report_id": rep.report_id, "faithfulness": rep.faithfulness_score})
-    except Exception as exc:
-        record_audit_trace(alert.correlation_id, "REPORT_GENERATION_ERROR", {"error": str(exc)})
 
 
 async def stream_loop():
@@ -147,7 +212,6 @@ async def inject_typology(typology: str):
     except ValueError:
         raise HTTPException(status_code=400, detail=f"Unknown typology: {typology}")
     info = streamer.enqueue_interlaced_typology(typ, immediate_first_hop=True)
-    # Process first hop immediately; subsequent hops will interlace naturally among licit traffic!
     await process_one_event()
     return info
 
@@ -187,6 +251,7 @@ def dashboard_state():
                 "node_count": len(a.subgraph_nodes),
                 "has_report": a.alert_id in REPORTS_BY_ALERT,
                 "report_id": REPORTS_BY_ALERT[a.alert_id].report_id if a.alert_id in REPORTS_BY_ALERT else None,
+                "narrative_engine": REPORTS_BY_ALERT[a.alert_id].narrative_engine if a.alert_id in REPORTS_BY_ALERT else None,
                 "top_similarity": (
                     REPORTS_BY_ALERT[a.alert_id].evidence.historic_case_matches[0].similarity_index
                     if (a.alert_id in REPORTS_BY_ALERT and REPORTS_BY_ALERT[a.alert_id].evidence.historic_case_matches)
@@ -203,7 +268,7 @@ def get_alert_full(alert_id: str):
     if alert_id not in ALERTS_DB:
         raise HTTPException(status_code=404, detail="Alert not found")
     alert = ALERTS_DB[alert_id]
-    rep = REPORTS_BY_ALERT.get(alert_id)
+    rep = REPORTS_BY_ALERT.get(alert_id) or _try_pull_report_from_gcs(alert)
     return {
         "alert": alert.model_dump(),
         "report": rep.model_dump() if rep else None,
@@ -228,9 +293,8 @@ def export_report(report_id: str, format: str = "pdf"):
     if format == "json":
         return rep.model_dump()
     if rep.pdf_gcs_uri and VAULT_BUCKET:
-        from google.cloud import storage
         blob_name = rep.pdf_gcs_uri.replace(f"gs://{VAULT_BUCKET}/", "")
-        pdf_bytes = storage.Client().bucket(VAULT_BUCKET).blob(blob_name).download_as_bytes()
+        pdf_bytes = _get_gcs_client().bucket(VAULT_BUCKET).blob(blob_name).download_as_bytes()
         return Response(
             content=pdf_bytes,
             media_type="application/pdf",

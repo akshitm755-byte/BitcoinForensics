@@ -23,19 +23,27 @@ locals {
   compute_sa = "454908242756-compute@developer.gserviceaccount.com"
 }
 
-# Grant Cloud Run runtime service account read/write access to GCS checkpoints & PDFs
+# Grant Cloud Run runtime service account read/write access to GCS vault (checkpoints, reports, PDFs)
 resource "google_storage_bucket_iam_member" "cloudrun_vault_access" {
   bucket = var.vault_bucket
   role   = "roles/storage.objectUser"
   member = "serviceAccount:${local.compute_sa}"
 }
 
+# Pub/Sub Event Backbone
 resource "google_pubsub_topic" "tx_events" {
   name = "tx-events-stream"
 }
 
 resource "google_pubsub_topic" "aml_alerts" {
   name = "aml-alerts-queue"
+}
+
+# Grant Cloud Run runtime service account permission to publish alerts into Pub/Sub
+resource "google_pubsub_topic_iam_member" "cloudrun_alerts_publisher" {
+  topic  = google_pubsub_topic.aml_alerts.name
+  role   = "roles/pubsub.publisher"
+  member = "serviceAccount:${local.compute_sa}"
 }
 
 # Module 2: Temporal Bit-CHetG + Amatriciana + In-Graph Memory Service
@@ -66,17 +74,21 @@ resource "google_cloud_run_v2_service" "mod2_gnn" {
       }
       env {
         name  = "MODEL_BLOB_PATH"
+        value = "models/temporal_bitchetg_v4.pt"
+      }
+      env {
+        name  = "FALLBACK_MODEL_BLOB_PATH"
         value = "models/temporal_bitchetg_v3.pt"
       }
       env {
         name  = "ALERT_THRESHOLD"
-        value = "0.58"
+        value = "0.52"
       }
     }
   }
 }
 
-# Module 3: GNNExplainer + OSINT Historic Scraper + RAG + Gemini LLM + Visual PDF Service
+# Module 3: Serverless GNNExplainer + OSINT Scraper + Gemini 3.8 Flash + Visual PDF Service
 resource "google_cloud_run_v2_service" "mod3_agents" {
   name     = "mod3-reporting-agents"
   location = var.region
@@ -85,7 +97,7 @@ resource "google_cloud_run_v2_service" "mod3_agents" {
   template {
     scaling {
       min_instance_count = 0
-      max_instance_count = 3
+      max_instance_count = 4
     }
     containers {
       image = "${local.registry}/mod3-agents:${var.image_tag}"
@@ -104,6 +116,10 @@ resource "google_cloud_run_v2_service" "mod3_agents" {
       }
       env {
         name  = "MODEL_BLOB_PATH"
+        value = "models/temporal_bitchetg_v4.pt"
+      }
+      env {
+        name  = "FALLBACK_MODEL_BLOB_PATH"
         value = "models/temporal_bitchetg_v3.pt"
       }
       env {
@@ -118,7 +134,23 @@ resource "google_cloud_run_v2_service" "mod3_agents" {
   }
 }
 
-# Module 4: Interlaced AMLSim Streamer, API, Audit Logger & Minimalist React UI
+# Serverless Event-Driven Push Subscription: Pub/Sub `aml-alerts-queue` -> Module 3 Cloud Run
+resource "google_pubsub_subscription" "alerts_push_to_mod3" {
+  name                 = "aml-alerts-to-mod3-push"
+  topic                = google_pubsub_topic.aml_alerts.name
+  ack_deadline_seconds = 120
+
+  push_config {
+    push_endpoint = "${google_cloud_run_v2_service.mod3_agents.uri}/pubsub/explain-and-report"
+  }
+
+  retry_policy {
+    minimum_backoff = "5s"
+    maximum_backoff = "60s"
+  }
+}
+
+# Module 4: Interlaced AMLSim Streamer, Runtime API, Audit Logger & Minimalist React UI
 resource "google_cloud_run_v2_service" "mod4_runtime" {
   name     = "mod4-investigator-dashboard"
   location = var.region
@@ -141,6 +173,10 @@ resource "google_cloud_run_v2_service" "mod4_runtime" {
         }
       }
       env {
+        name  = "GCP_PROJECT_ID"
+        value = var.project_id
+      }
+      env {
         name  = "VAULT_BUCKET"
         value = var.vault_bucket
       }
@@ -155,6 +191,14 @@ resource "google_cloud_run_v2_service" "mod4_runtime" {
       env {
         name  = "TX_STREAM_TOPIC"
         value = google_pubsub_topic.tx_events.name
+      }
+      env {
+        name  = "ALERT_PUBSUB_TOPIC"
+        value = google_pubsub_topic.aml_alerts.name
+      }
+      env {
+        name  = "ENABLE_PUBSUB_TRIGGER"
+        value = "true"
       }
     }
   }

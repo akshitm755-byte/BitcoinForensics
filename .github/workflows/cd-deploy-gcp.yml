@@ -1,4 +1,4 @@
-name: CD — Build & Deploy ABI v3 Microservices to GCP Cloud Run
+name: CD — Build & Deploy ABI v4 Serverless Microservices to GCP
 
 on:
   push:
@@ -25,8 +25,8 @@ jobs:
           pip install --extra-index-url https://download.pytorch.org/whl/cpu torch==2.3.1+cpu
           pip install pydantic networkx numpy pandas matplotlib reportlab fastapi httpx pytest
           pip install -e ./contracts
-      - name: Run Leakage, In-Graph Memory & Dossier Gate
-        run: pytest tests/test_v3_full_pipeline.py -v
+      - name: Run Leakage, In-Graph Memory, Pub/Sub & Visual PDF Gate
+        run: pytest tests/test_v4_full_pipeline.py -v
 
   build-and-deploy:
     needs: test-gate
@@ -50,7 +50,7 @@ jobs:
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
 
-      - name: Build & Push v3 Microservices
+      - name: Build & Push v4 Microservices
         run: |
           REGISTRY="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.GAR_REPO }}"
           TAG="${{ github.sha }}"
@@ -67,11 +67,12 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
-      - name: Terraform Init & Apply
+      - name: Terraform Validate, Init & Apply
         id: tf
         working-directory: ./infra
         run: |
           terraform init -backend-config="bucket=${{ env.TF_STATE_BUCKET }}"
+          terraform validate
           terraform apply -auto-approve \
             -var="project_id=${{ env.PROJECT_ID }}" \
             -var="region=${{ env.REGION }}" \
@@ -84,7 +85,7 @@ jobs:
 
       - name: Publish Live Cloud Run URLs
         run: |
-          echo "## ABI v3 Deployed to GCP Cloud Run" >> $GITHUB_STEP_SUMMARY
+          echo "## ABI v4 Deployed to GCP Cloud Run (Serverless Pub/Sub Active)" >> $GITHUB_STEP_SUMMARY
           echo "- **Investigator Forensics Dashboard:** ${{ steps.tf.outputs.dashboard_url }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Module 2 (Bit-CHetG + Amatriciana + In-Graph Memory):** ${{ steps.tf.outputs.gnn_url }}/docs" >> $GITHUB_STEP_SUMMARY
-          echo "- **Module 3 (GNNExplainer + OSINT Scraper + RAG + PDF):** ${{ steps.tf.outputs.agents_url }}/docs" >> $GITHUB_STEP_SUMMARY
+          echo "- **Module 3 (Serverless GNNExplainer + OSINT Scraper + Gemini 3.8 Flash):** ${{ steps.tf.outputs.agents_url }}/docs" >> $GITHUB_STEP_SUMMARY

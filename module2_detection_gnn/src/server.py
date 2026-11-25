@@ -9,18 +9,19 @@ from module2_detection_gnn.src.torch_model import load_model_from_gcs_or_init, s
 app = FastAPI(title="Module 2 — Temporal Bit-CHetG + Amatriciana + In-Graph Memory Service")
 
 VAULT_BUCKET = os.getenv("VAULT_BUCKET", "")
-MODEL_BLOB_PATH = os.getenv("MODEL_BLOB_PATH", "models/temporal_bitchetg_v3.pt")
-ALERT_THRESHOLD = float(os.getenv("ALERT_THRESHOLD", "0.58"))
+MODEL_BLOB_PATH = os.getenv("MODEL_BLOB_PATH", "models/temporal_bitchetg_v4.pt")
+FALLBACK_BLOB_PATH = os.getenv("FALLBACK_MODEL_BLOB_PATH", "models/temporal_bitchetg_v3.pt")
+ALERT_THRESHOLD = float(os.getenv("ALERT_THRESHOLD", "0.52"))
 
 store = IncrementalGraphStore(memory_dim=32)
-model, checkpoint_status = load_model_from_gcs_or_init(VAULT_BUCKET, MODEL_BLOB_PATH)
+model, checkpoint_status = load_model_from_gcs_or_init(VAULT_BUCKET, MODEL_BLOB_PATH, FALLBACK_BLOB_PATH)
 
 
 @app.get("/health")
 def health():
     return {
         "status": "ok",
-        "model_version": "Temporal-BitCHetG-InGraphMem-v3.0",
+        "model_version": "Temporal-BitCHetG-InGraphMem-v4.0",
         "checkpoint_status": checkpoint_status,
         "active_nodes": len(store.nodes),
         "active_edges": len(store.edges),
@@ -30,7 +31,7 @@ def health():
 @app.post("/reload-checkpoint")
 def reload_checkpoint():
     global model, checkpoint_status
-    model, checkpoint_status = load_model_from_gcs_or_init(VAULT_BUCKET, MODEL_BLOB_PATH)
+    model, checkpoint_status = load_model_from_gcs_or_init(VAULT_BUCKET, MODEL_BLOB_PATH, FALLBACK_BLOB_PATH)
     return {"reloaded": True, "checkpoint_status": checkpoint_status}
 
 
@@ -83,7 +84,7 @@ def score_event(event: TransactionEvent):
         correlation_id=event.correlation_id,
         timestamp=event.timestamp,
         risk_score=risk_score,
-        model_version="Temporal-BitCHetG-InGraphMem-v3.0",
+        model_version="Temporal-BitCHetG-InGraphMem-v4.0",
         model_checkpoint_status=checkpoint_status,
         in_graph_memory_activation=round(motif_act, 4),
         matched_motif_slot=motif_slot,
