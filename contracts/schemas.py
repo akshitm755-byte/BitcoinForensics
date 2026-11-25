@@ -162,6 +162,13 @@ class Claim(BaseModel):
     evidence_refs: List[str]
     is_grounded: bool = False
 
+class FigureExplanation(BaseModel):
+    figure_id: str          # "Figure 1" .. "Figure 5"
+    title: str
+    explanation: str        # 2-4 sentence multimodal visual + analytical breakdown
+    evidence_refs: List[str] = Field(default_factory=list)
+    is_grounded: bool = False
+
 class Report(BaseModel):
     report_id: str
     alert_id: str
@@ -173,6 +180,7 @@ class Report(BaseModel):
     trigger_mode: str = "serverless_pubsub"
     executive_summary: str = ""
     claims: List[Claim]
+    figure_explanations: List[FigureExplanation] = Field(default_factory=list)
     evidence: Evidence
     pdf_gcs_uri: Optional[str] = None
     report_gcs_uri: Optional[str] = None

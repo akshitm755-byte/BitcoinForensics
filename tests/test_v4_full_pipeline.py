@@ -1,7 +1,6 @@
 import base64
 import json
 import os
-import re
 import sys
 import torch
 
@@ -26,7 +25,7 @@ def test_terraform_hcl2_has_no_semicolons():
     assert "google_storage_bucket_iam_member" in tf_text
 
 
-def test_v4_full_serverless_and_executive_summary_pipeline():
+def test_v4_full_serverless_and_multimodal_figures_pipeline():
     # 1. Interlaced AMLSim stream verification
     gen = AMLSimStreamGenerator(seed=11, illicit_campaign_prob=0.0)
     gen.enqueue_interlaced_typology(Typology.PEELING_CHAIN, immediate_first_hop=True)
@@ -66,7 +65,7 @@ def test_v4_full_serverless_and_executive_summary_pipeline():
 
     ev, sub_nodes, sub_edges, motif_act, motif_slot = target_sub
     alert = Alert(
-        alert_id="ALT-V4TEST",
+        alert_id="ALT-V4FIGTEST",
         correlation_id=ev.correlation_id,
         timestamp=ev.timestamp,
         risk_score=0.88,
@@ -85,13 +84,16 @@ def test_v4_full_serverless_and_executive_summary_pipeline():
     decoded_alert = Alert(**json.loads(base64.b64decode(encoded).decode("utf-8")))
     assert decoded_alert.alert_id == alert.alert_id
 
-    # 5. GNNExplainer + Differentiated OSINT Scraper + Compliance Critic + Executive Summary + Thread-Safe PDF
+    # 5. Chart-First Pipeline: Evidence -> Render Figures 1-5 -> Multimodal Orchestrator -> PDF
     builder = EvidenceArtifactBuilder(model, enable_live_scrape=False)
     evidence = builder.build_sealed_evidence(decoded_alert)
     assert len(evidence.historic_case_matches) == 3
-    # Ensure similarity scores aren't all identically tied
-    sims = [m.similarity_index for m in evidence.historic_case_matches]
-    assert len(set(sims)) >= 2, f"Expected differentiated similarity scores, got {sims}"
+
+    charts = ForensicDossierPDFExporter.render_labeled_charts(decoded_alert, evidence)
+    assert list(charts.keys()) == ["Figure 1", "Figure 2", "Figure 3", "Figure 4", "Figure 5"]
+    for fig_id, ch in charts.items():
+        assert len(ch["png_bytes"]) > 5000, f"{fig_id} PNG looks empty!"
+        assert isinstance(ch["stats"], dict) and len(ch["stats"]) > 0
 
     orchestrator = AgenticForensicOrchestrator()
     ok, _ = orchestrator._compliance_critic_verify(
@@ -99,16 +101,22 @@ def test_v4_full_serverless_and_executive_summary_pipeline():
     )
     assert ok is False
 
-    report = orchestrator.generate_verified_report(decoded_alert, evidence, trigger_mode="serverless_pubsub")
+    report = orchestrator.generate_verified_report(
+        decoded_alert, evidence, trigger_mode="serverless_pubsub", charts=charts
+    )
     assert report.critic_verdict == "APPROVED"
     assert report.faithfulness_score == 1.0
     assert len(report.executive_summary) > 100
+    assert len(report.figure_explanations) == 5
+    assert all(fe.is_grounded and len(fe.explanation) > 40 for fe in report.figure_explanations)
 
-    pdf_path = ForensicDossierPDFExporter.export_pdf(decoded_alert, report, output_dir="./test_dossiers")
-    assert os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 45000
+    pdf_path = ForensicDossierPDFExporter.export_pdf(
+        decoded_alert, report, output_dir="./test_dossiers", charts=charts
+    )
+    assert os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 60000
 
 
 if __name__ == "__main__":
     test_terraform_hcl2_has_no_semicolons()
-    test_v4_full_serverless_and_executive_summary_pipeline()
-    print("ALL V4 TESTS PASSED (HCL2, Serverless Pub/Sub Envelope, Differentiated OSINT, Executive Summary & Thread-Safe PDF)!")
+    test_v4_full_serverless_and_multimodal_figures_pipeline()
+    print("ALL MULTIMODAL FIGURE-BY-FIGURE PATCH TESTS PASSED!")

@@ -4,7 +4,7 @@ export default function DossierViewer({ detail, selectedClaimId, onSelectClaim, 
   if (!detail) {
     return (
       <div style={{ background: "#11141c", border: "1px solid #1e232e", borderRadius: 12, padding: 20, color: "#64748b", fontSize: 13, lineHeight: 1.6 }}>
-        Select a flagged case from the alert queue—or inject an interlaced laundering campaign—to inspect its PyTorch GNNExplainer masks, OSINT historic case similarity index, LLM abstractive brief, and downloadable PDF dossier.
+        Select a flagged case from the alert queue—or inject an interlaced laundering campaign—to inspect its PyTorch GNNExplainer masks, multimodal figure-by-figure analysis, OSINT historic case similarity index, and downloadable PDF dossier.
       </div>
     );
   }
@@ -55,11 +55,10 @@ export default function DossierViewer({ detail, selectedClaimId, onSelectClaim, 
 
       {!report ? (
         <div style={{ fontSize: 12, color: "#38bdf8", fontFamily: "'JetBrains Mono', monospace", padding: "12px 0" }}>
-          Serverless Pub/Sub triggered -> Running PyTorch GNNExplainer + OSINT Scraper + Gemini Documentation Agent...
+          Serverless Pub/Sub triggered -> Rendering Figures 1-5 + Multimodal Gemini Documentation Agent...
         </div>
       ) : (
         <>
-          {/* Plain-Language Abstractive Executive Summary */}
           {report.executive_summary && (
             <div style={{ background: "rgba(56,189,248,0.06)", border: "1px solid rgba(56,189,248,0.28)", borderRadius: 8, padding: "10px 12px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9.5, fontFamily: "'JetBrains Mono', monospace", color: "#38bdf8", marginBottom: 4 }}>
@@ -72,7 +71,6 @@ export default function DossierViewer({ detail, selectedClaimId, onSelectClaim, 
             </div>
           )}
 
-          {/* Historic Case Precedent Highlight Card */}
           {topCase && (
             <div style={{ background: "#0a0c10", border: "1px solid #1e232e", borderRadius: 8, padding: "10px 12px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
@@ -98,7 +96,6 @@ export default function DossierViewer({ detail, selectedClaimId, onSelectClaim, 
             <span>TRIGGER: <strong>{report.trigger_mode.toUpperCase()}</strong></span>
           </div>
 
-          {/* Grounded Claims */}
           <div>
             <div style={{ fontSize: 10, color: "#64748b", fontFamily: "'JetBrains Mono', monospace", marginBottom: 6 }}>
               GROUNDED INVESTIGATIVE CLAIMS (CLICK TO HIGHLIGHT ON GRAPH)
@@ -126,7 +123,33 @@ export default function DossierViewer({ detail, selectedClaimId, onSelectClaim, 
             })}
           </div>
 
-          {/* Feature Attributions */}
+          {report.figure_explanations && report.figure_explanations.length > 0 && (
+            <div>
+              <div style={{ fontSize: 10, color: "#64748b", fontFamily: "'JetBrains Mono', monospace", marginBottom: 6 }}>
+                MULTIMODAL FIGURE-BY-FIGURE BREAKDOWN (PDF FIGURES 1–5)
+              </div>
+              {report.figure_explanations.map((f) => {
+                const active = selectedClaimId === f.figure_id;
+                return (
+                  <div
+                    key={f.figure_id}
+                    onClick={() => onSelectClaim(active ? null : { claim_id: f.figure_id, evidence_refs: f.evidence_refs })}
+                    style={{
+                      padding: "8px 10px", marginBottom: 6, borderRadius: 7, cursor: "pointer",
+                      background: active ? "rgba(56,189,248,0.12)" : "#0a0c10",
+                      border: `1px solid ${active ? "rgba(56,189,248,0.5)" : "#1e232e"}`,
+                    }}
+                  >
+                    <div style={{ fontSize: 10.5, fontWeight: 600, color: "#38bdf8", fontFamily: "'JetBrains Mono', monospace", marginBottom: 3 }}>
+                      {f.figure_id} — {f.title}
+                    </div>
+                    <div style={{ fontSize: 11.5, lineHeight: 1.48, color: "#cbd5e1" }}>{f.explanation}</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           <div>
             <div style={{ fontSize: 10, color: "#64748b", fontFamily: "'JetBrains Mono', monospace", marginBottom: 6 }}>
               GNNEXPLAINER FEATURE ATTRIBUTIONS
@@ -145,7 +168,6 @@ export default function DossierViewer({ detail, selectedClaimId, onSelectClaim, 
               ))}
           </div>
 
-          {/* Audit Hash Log */}
           <div>
             <div style={{ fontSize: 10, color: "#64748b", fontFamily: "'JetBrains Mono', monospace", marginBottom: 4 }}>
               SHA-256 PROVENANCE AUDIT TRAIL

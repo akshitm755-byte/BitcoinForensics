@@ -8,7 +8,7 @@ from module3_reporting_agents.src.evidence_builder import EvidenceArtifactBuilde
 from module3_reporting_agents.src.orchestrator import AgenticForensicOrchestrator
 from module3_reporting_agents.src.pdf_exporter import ForensicDossierPDFExporter
 
-app = FastAPI(title="Module 3 — Serverless GNNExplainer + OSINT Scraper + Gemini 3.8 Flash + PDF Service")
+app = FastAPI(title="Module 3 — Serverless Multimodal GNNExplainer + OSINT Scraper + Gemini 3.8 Flash + PDF Service")
 
 VAULT_BUCKET = os.getenv("VAULT_BUCKET", "")
 MODEL_BLOB_PATH = os.getenv("MODEL_BLOB_PATH", "models/temporal_bitchetg_v4.pt")
@@ -26,6 +26,7 @@ def health():
         "checkpoint_status": checkpoint_status,
         "gemini_enabled": bool(orchestrator.gemini_api_key),
         "gemini_model": orchestrator.primary_model,
+        "multimodal_figure_analysis": True,
     }
 
 
@@ -38,9 +39,14 @@ def reload_checkpoint():
 
 
 def _run_reporting_pipeline(alert: Alert, trigger_mode: str) -> dict:
+    # 1. Run PyTorch GNNExplainer + OSINT Historic Cases Scraper
     evidence = builder.build_sealed_evidence(alert)
-    report = orchestrator.generate_verified_report(alert, evidence, trigger_mode=trigger_mode)
-    ForensicDossierPDFExporter.export_pdf(alert, report, vault_bucket=VAULT_BUCKET or None)
+    # 2. Render labeled Figures 1-5 + exact chart metrics BEFORE calling the multimodal LLM
+    charts = ForensicDossierPDFExporter.render_labeled_charts(alert, evidence)
+    # 3. Multimodal Gemini Documentation Agent inspects all 5 figures + verifies via Compliance Critic
+    report = orchestrator.generate_verified_report(alert, evidence, trigger_mode=trigger_mode, charts=charts)
+    # 4. Assemble multi-page PDF embedding the already-rendered figures + their dedicated explanations
+    ForensicDossierPDFExporter.export_pdf(alert, report, vault_bucket=VAULT_BUCKET or None, charts=charts)
     return report.model_dump()
 
 
@@ -51,11 +57,6 @@ def explain_and_report(alert: Alert):
 
 @app.post("/pubsub/explain-and-report")
 async def pubsub_explain_and_report(request: Request):
-    """
-    Serverless Cloud Pub/Sub Push Endpoint:
-    Wakes up Module 3 automatically when an Alert is published to `aml-alerts-queue`,
-    generates the verified dossier + PDF, and persists both into the shared GCS vault.
-    """
     envelope = await request.json()
     if "message" not in envelope or "data" not in envelope["message"]:
         raise HTTPException(status_code=400, detail="Invalid Pub/Sub push envelope")

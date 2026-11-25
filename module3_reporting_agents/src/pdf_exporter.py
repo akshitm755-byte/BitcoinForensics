@@ -1,6 +1,6 @@
 import io
 import os
-from typing import Optional
+from typing import Dict, Optional, Tuple
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 from matplotlib.figure import Figure
 import networkx as nx
@@ -9,17 +9,68 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, PageBreak
-from contracts.schemas import Alert, Report, FEATURE_KEYS
+from reportlab.platypus import (
+    SimpleDocTemplate,
+    Paragraph,
+    Spacer,
+    Table,
+    TableStyle,
+    Image,
+    PageBreak,
+    KeepTogether,
+)
+from contracts.schemas import Alert, Evidence, Report, FEATURE_KEYS
 
 
 class ForensicDossierPDFExporter:
     """
-    Thread-safe Bureau-Grade Multi-Page Forensic Dossier (.pdf):
-      - Isolated matplotlib Figure + FigureCanvasAgg per chart (zero cross-thread corruption).
-      - Spacious Historic Cases chart with suptitle, top horizontal legend, and bar annotations.
-      - Section 5: Plain-Language Abstractive Executive Summary box concluding the document.
+    Thread-safe Multimodal Bureau-Grade Forensic Dossier (.pdf):
+      - Step 1: `render_labeled_charts(alert, evidence)` renders Figures 1-5 into PNG bytes
+        alongside exact structured chart metrics so the multimodal LLM can inspect every figure.
+      - Step 2: `export_pdf(alert, report, charts=...)` embeds each labeled figure paired directly
+        with its Compliance-Critic-verified figure-by-figure explanation and concluding executive summary.
     """
+
+    @classmethod
+    def render_labeled_charts(cls, alert: Alert, evidence: Evidence) -> Dict[str, dict]:
+        fig1_png, fig1_stats = cls._render_subgraph_chart(alert, evidence)
+        fig2_png, fig2_stats = cls._render_feature_chart(evidence)
+        fig3_png, fig3_stats = cls._render_correlation_heatmap(alert)
+        fig4_png, fig4_stats = cls._render_temporal_scatter(alert, evidence)
+        fig5_png, fig5_stats = cls._render_historic_similarity_chart(evidence)
+
+        return {
+            "Figure 1": {
+                "title": "Minimal Flagged Subgraph Topology (Crimson = GNNExplainer Core)",
+                "png_bytes": fig1_png,
+                "stats": fig1_stats,
+                "pdf_size": (5.55 * inch, 3.25 * inch),
+            },
+            "Figure 2": {
+                "title": "GNNExplainer Feature Attribution Weights",
+                "png_bytes": fig2_png,
+                "stats": fig2_stats,
+                "pdf_size": (5.55 * inch, 2.75 * inch),
+            },
+            "Figure 3": {
+                "title": "Subgraph Feature Correlation Heatmap (Pearson r)",
+                "png_bytes": fig3_png,
+                "stats": fig3_stats,
+                "pdf_size": (5.15 * inch, 3.35 * inch),
+            },
+            "Figure 4": {
+                "title": "Temporal Spacing vs. Transferred Volume Anomaly Scatter",
+                "png_bytes": fig4_png,
+                "stats": fig4_stats,
+                "pdf_size": (5.45 * inch, 3.15 * inch),
+            },
+            "Figure 5": {
+                "title": "OSINT Historic Cases — Vector Similarity Index vs. Bureau Escalation Rate",
+                "png_bytes": fig5_png,
+                "stats": fig5_stats,
+                "pdf_size": (6.95 * inch, 2.65 * inch),
+            },
+        }
 
     @classmethod
     def export_pdf(
@@ -28,15 +79,15 @@ class ForensicDossierPDFExporter:
         report: Report,
         output_dir: str = "/tmp/generated_dossiers",
         vault_bucket: Optional[str] = None,
+        charts: Optional[Dict[str, dict]] = None,
     ) -> str:
         os.makedirs(output_dir, exist_ok=True)
         local_path = os.path.join(output_dir, f"{report.report_id}.pdf")
 
-        subgraph_buf = cls._render_subgraph_chart(alert, report)
-        feat_buf = cls._render_feature_chart(report)
-        heatmap_buf = cls._render_correlation_heatmap(alert)
-        scatter_buf = cls._render_temporal_scatter(alert, report)
-        cases_buf = cls._render_historic_similarity_chart(report)
+        if charts is None:
+            charts = cls.render_labeled_charts(alert, report.evidence)
+
+        fig_exp_map = {fe.figure_id: fe for fe in (report.figure_explanations or [])}
 
         doc = SimpleDocTemplate(
             local_path, pagesize=A4,
@@ -47,9 +98,50 @@ class ForensicDossierPDFExporter:
         sub_style = ParagraphStyle("S", parent=styles["Normal"], fontSize=8.4, textColor=colors.HexColor("#475569"), spaceAfter=10)
         h2_style = ParagraphStyle("H2", parent=styles["Heading2"], fontSize=11, textColor=colors.HexColor("#1e3a8a"), spaceBefore=8, spaceAfter=6)
         body_style = ParagraphStyle("B", parent=styles["Normal"], fontSize=8.8, leading=12.6)
-        cell_style = ParagraphStyle("C", parent=styles["Normal"], fontSize=7.8, leading=10.2)
+        cell_style = ParagraphStyle("C", parent=styles["Normal"], fontSize=7.8, leading=10.4)
+        fig_cap_style = ParagraphStyle("FC", parent=styles["Normal"], fontSize=8.6, leading=12.2, textColor=colors.HexColor("#0f172a"))
+        fig_ref_style = ParagraphStyle("FR", parent=styles["Normal"], fontSize=7.4, leading=10.0, textColor=colors.HexColor("#475569"))
+
+        def build_figure_block(fig_id: str) -> KeepTogether:
+            ch = charts[fig_id]
+            w, h = ch["pdf_size"]
+            fe = fig_exp_map.get(fig_id)
+            caption_title = f"<b>{fig_id} — {ch['title']}</b>"
+            explanation_text = (
+                fe.explanation.replace("σ", " SD")
+                if fe else "Automated visual analysis unavailable for this figure."
+            )
+            refs_line = (
+                f"<i>Verified Figure Citations: {', '.join(fe.evidence_refs)} (Grounded={fe.is_grounded})</i>"
+                if (fe and fe.evidence_refs) else ""
+            )
+
+            img_tbl = Table([[Image(io.BytesIO(ch["png_bytes"]), width=w, height=h)]], colWidths=[7.2 * inch])
+            img_tbl.setStyle(TableStyle([
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#090d16")),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ]))
+
+            cap_rows = [[Paragraph(f"{caption_title}<br/>{explanation_text}", fig_cap_style)]]
+            if refs_line:
+                cap_rows.append([Paragraph(refs_line, fig_ref_style)])
+
+            cap_tbl = Table(cap_rows, colWidths=[7.2 * inch])
+            cap_tbl.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f8fafc")),
+                ("BOX", (0, 0), (-1, -1), 0.55, colors.HexColor("#cbd5e1")),
+                ("LINEBEFORE", (0, 0), (0, -1), 2.5, colors.HexColor("#1e3a8a")),
+                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ]))
+            return KeepTogether([img_tbl, cap_tbl, Spacer(1, 10)])
 
         story = []
+        # ---- PAGE 1: Executive Metadata & Compliance-Verified Claims ----
         story.append(Paragraph("AUTONOMOUS BLOCKCHAIN INVESTIGATOR — FORENSIC INTELLIGENCE DOSSIER", title_style))
         story.append(Paragraph(
             f"Report: <b>{report.report_id}</b> &nbsp;|&nbsp; Alert: <b>{report.alert_id}</b> &nbsp;|&nbsp; "
@@ -95,21 +187,12 @@ class ForensicDossierPDFExporter:
         story.append(meta_tbl)
         story.append(Spacer(1, 10))
 
-        story.append(Paragraph("1. GNNExplainer Minimal Subgraph &amp; Feature Attributions", h2_style))
-        story.append(Table(
-            [[Image(subgraph_buf, width=3.65 * inch, height=2.5 * inch),
-              Image(feat_buf, width=3.5 * inch, height=2.5 * inch)]],
-            colWidths=[3.7 * inch, 3.5 * inch]
-        ))
-        story.append(Spacer(1, 8))
-
-        story.append(Paragraph("2. Compliance-Verified Investigative Narrative &amp; Historic Case Correlation", h2_style))
+        story.append(Paragraph("1. Compliance-Verified Investigative Narrative &amp; Historic Case Correlation", h2_style))
         claim_rows = [["ID", "Evidence-Grounded Forensic Claim", "Resolved Citations"]]
         for c in report.claims:
-            clean_sentence = c.sentence.replace("σ", " SD")
             claim_rows.append([
                 Paragraph(f"<b>{c.claim_id}</b>", body_style),
-                Paragraph(clean_sentence, body_style),
+                Paragraph(c.sentence.replace("σ", " SD"), body_style),
                 Paragraph(", ".join(c.evidence_refs), body_style),
             ])
         c_tbl = Table(claim_rows, colWidths=[0.65 * inch, 4.65 * inch, 1.9 * inch])
@@ -122,25 +205,29 @@ class ForensicDossierPDFExporter:
         ]))
         story.append(c_tbl)
 
-        # Page 2: Statistical Correlation Visuals + Precedents + Concluding Abstractive Summary
+        # ---- PAGE 2: Visual Evidence Part I (Figures 1 & 2 with Multimodal Explanations) ----
         story.append(PageBreak())
-        story.append(Paragraph("3. Quantitative Feature Correlation, Temporal Cadence &amp; Historic Escalation Analytics", h2_style))
+        story.append(Paragraph("2. Explainability Visuals &amp; Figure-by-Figure Analysis (Figures 1–2)", h2_style))
+        story.append(build_figure_block("Figure 1"))
+        story.append(build_figure_block("Figure 2"))
+
+        # ---- PAGE 3: Visual Evidence Part II (Figures 3 & 4 with Multimodal Explanations) ----
+        story.append(PageBreak())
+        story.append(Paragraph("3. Quantitative Feature Correlation &amp; Temporal Cadence Analysis (Figures 3–4)", h2_style))
         story.append(Paragraph(
             f"Cadence Signature: <b>{alert.cadence_signature}</b> &nbsp;|&nbsp; "
             f"Median Inter-Hop Spacing: <b>{report.evidence.statistical_correlations.get('median_inter_hop_sec', 0)}s</b> &nbsp;|&nbsp; "
             f"Fan-Out Deviation vs. Licit Baseline: <b>{report.evidence.statistical_correlations.get('fan_out_z_deviation', 0):+.2f} SD</b>",
             sub_style
         ))
-        story.append(Table(
-            [[Image(heatmap_buf, width=3.6 * inch, height=2.68 * inch),
-              Image(scatter_buf, width=3.6 * inch, height=2.68 * inch)]],
-            colWidths=[3.62 * inch, 3.62 * inch]
-        ))
-        story.append(Spacer(1, 8))
-        story.append(Image(cases_buf, width=7.2 * inch, height=2.65 * inch))
-        story.append(Spacer(1, 8))
+        story.append(build_figure_block("Figure 3"))
+        story.append(build_figure_block("Figure 4"))
 
-        story.append(Paragraph("4. OSINT &amp; Historic Cases Scraper Agent — Matched Precedents &amp; Attribution", h2_style))
+        # ---- PAGE 4: Figure 5 + OSINT Precedents Table + Concluding Executive Summary ----
+        story.append(PageBreak())
+        story.append(Paragraph("4. OSINT &amp; Historic Cases Scraper Agent — Precedent Correlation (Figure 5)", h2_style))
+        story.append(build_figure_block("Figure 5"))
+
         if report.evidence.historic_case_matches:
             h_rows = [["Case ID & Precedent", "Source", "Sim.", "Esc.", "Temporal / Pseudorandomization Signature"]]
             for m in report.evidence.historic_case_matches:
@@ -220,7 +307,7 @@ class ForensicDossierPDFExporter:
         return local_path
 
     @staticmethod
-    def _new_figure(figsize: tuple[float, float], dpi: int = 150):
+    def _new_figure(figsize: Tuple[float, float], dpi: int = 150):
         fig = Figure(figsize=figsize, dpi=dpi, facecolor="#090d16")
         FigureCanvas(fig)
         ax = fig.add_subplot(111)
@@ -228,61 +315,80 @@ class ForensicDossierPDFExporter:
         return fig, ax
 
     @staticmethod
-    def _save_figure(fig: Figure, tight: bool = True) -> io.BytesIO:
+    def _figure_to_bytes(fig: Figure, tight: bool = True) -> bytes:
         buf = io.BytesIO()
         if tight:
             fig.tight_layout()
         fig.savefig(buf, format="png", facecolor=fig.get_facecolor())
-        buf.seek(0)
-        return buf
+        return buf.getvalue()
 
     @classmethod
-    def _render_subgraph_chart(cls, alert: Alert, report: Report) -> io.BytesIO:
-        fig, ax = cls._new_figure((4.6, 3.1))
+    def _render_subgraph_chart(cls, alert: Alert, evidence: Evidence) -> Tuple[bytes, dict]:
+        fig, ax = cls._new_figure((5.8, 3.4))
         G = nx.DiGraph()
-        min_nodes, min_edges = set(report.evidence.minimal_nodes), set(report.evidence.minimal_edges)
+        min_nodes, min_edges = set(evidence.minimal_nodes), set(evidence.minimal_edges)
         for n in alert.subgraph_nodes[:24]:
             G.add_node(n.node_id)
         for e in alert.subgraph_edges:
             if e.source_id in G and e.target_id in G:
                 G.add_edge(e.source_id, e.target_id, flagged=(e.edge_id in min_edges))
-        pos = nx.spring_layout(G, seed=42, k=0.75) if len(G) > 0 else {}
+        pos = nx.spring_layout(G, seed=42, k=0.78) if len(G) > 0 else {}
         nx.draw_networkx_edges(
             G, pos, ax=ax,
             edge_color=["#ef4444" if G[u][v].get("flagged") else "#475569" for u, v in G.edges()],
-            width=[2.2 if G[u][v].get("flagged") else 0.9 for u, v in G.edges()], arrows=True, arrowsize=8
+            width=[2.3 if G[u][v].get("flagged") else 0.9 for u, v in G.edges()], arrows=True, arrowsize=9
         )
         nx.draw_networkx_nodes(
             G, pos, ax=ax,
             node_color=["#ef4444" if n in min_nodes else "#38bdf8" for n in G.nodes()],
-            node_size=145, edgecolors="#f8fafc", linewidths=0.7
+            node_size=165, edgecolors="#f8fafc", linewidths=0.75
         )
         nx.draw_networkx_labels(
-            G, pos, labels={n: (n[:11] + "..." if len(n) > 12 else n) for n in G.nodes()},
-            ax=ax, font_size=5.3, font_color="#e2e8f0"
+            G, pos, labels={n: (n[:13] + "..." if len(n) > 14 else n) for n in G.nodes()},
+            ax=ax, font_size=5.8, font_color="#e2e8f0"
         )
-        ax.set_title("Minimal Flagged Subgraph (Crimson = GNNExplainer)", color="#f8fafc", fontsize=8, pad=5)
+        ax.set_title("Figure 1: Minimal Flagged Subgraph (Crimson = GNNExplainer Core)", color="#f8fafc", fontsize=8.8, pad=6)
         ax.axis("off")
-        return cls._save_figure(fig)
+
+        top_nodes = sorted(evidence.node_importance_mask.items(), key=lambda kv: kv[1], reverse=True)[:4]
+        stats = {
+            "total_nodes": len(alert.subgraph_nodes),
+            "total_edges": len(alert.subgraph_edges),
+            "minimal_nodes_count": len(evidence.minimal_nodes),
+            "minimal_edges_count": len(evidence.minimal_edges),
+            "top_minimal_nodes": [{"id": k, "mask": v} for k, v in top_nodes],
+            "minimal_edges": evidence.minimal_edges[:4],
+        }
+        return cls._figure_to_bytes(fig), stats
 
     @classmethod
-    def _render_feature_chart(cls, report: Report) -> io.BytesIO:
-        fig, ax = cls._new_figure((4.4, 3.1))
-        items = sorted(report.evidence.feature_attributions.items(), key=lambda kv: kv[1])
-        bars = ax.barh([k.replace("feat:", "") for k, _ in items], [v for _, v in items], color="#38bdf8", height=0.58)
+    def _render_feature_chart(cls, evidence: Evidence) -> Tuple[bytes, dict]:
+        fig, ax = cls._new_figure((5.8, 2.9))
+        items = sorted(evidence.feature_attributions.items(), key=lambda kv: kv[1])
+        labels = [k.replace("feat:", "") for k, _ in items]
+        vals = [v for _, v in items]
+        bars = ax.barh(labels, vals, color="#38bdf8", height=0.58)
         if bars:
             bars[-1].set_color("#ef4444")
-        ax.set_title("GNNExplainer Feature Attribution Weights", color="#f8fafc", fontsize=8, pad=5)
-        ax.tick_params(colors="#cbd5e1", labelsize=7)
+        for bar in bars:
+            w = bar.get_width()
+            ax.text(w + 0.01, bar.get_y() + bar.get_height() / 2, f"{w * 100:.1f}%",
+                    va="center", ha="left", color="#e2e8f0", fontsize=7)
+        ax.set_xlim(0, max(vals or [0.5]) * 1.18)
+        ax.set_title("Figure 2: GNNExplainer Feature Attribution Weights", color="#f8fafc", fontsize=8.8, pad=6)
+        ax.tick_params(colors="#cbd5e1", labelsize=7.5)
         for sp in ("top", "right"):
             ax.spines[sp].set_visible(False)
         for sp in ("bottom", "left"):
             ax.spines[sp].set_color("#334155")
-        return cls._save_figure(fig)
+
+        ranked = sorted(evidence.feature_attributions.items(), key=lambda kv: kv[1], reverse=True)
+        stats = {"ranked_feature_weights": [{k: v} for k, v in ranked]}
+        return cls._figure_to_bytes(fig), stats
 
     @classmethod
-    def _render_correlation_heatmap(cls, alert: Alert) -> io.BytesIO:
-        fig, ax = cls._new_figure((4.5, 3.35))
+    def _render_correlation_heatmap(cls, alert: Alert) -> Tuple[bytes, dict]:
+        fig, ax = cls._new_figure((5.3, 3.45))
         short_names = ["in_deg", "out_deg", "in_val", "out_val", "dt_min", "fan_out", "hop2"]
         if len(alert.subgraph_nodes) >= 3:
             mat = np.array([[float(n.features.get(k, 0.0)) for k in FEATURE_KEYS] for n in alert.subgraph_nodes])
@@ -294,26 +400,37 @@ class ForensicDossierPDFExporter:
         im = ax.imshow(corr, cmap="coolwarm", vmin=-1.0, vmax=1.0)
         ax.set_xticks(range(len(short_names)))
         ax.set_yticks(range(len(short_names)))
-        ax.set_xticklabels(short_names, rotation=38, ha="right", color="#cbd5e1", fontsize=6.5)
-        ax.set_yticklabels(short_names, color="#cbd5e1", fontsize=6.5)
+        ax.set_xticklabels(short_names, rotation=32, ha="right", color="#cbd5e1", fontsize=7.2)
+        ax.set_yticklabels(short_names, color="#cbd5e1", fontsize=7.2)
         for i in range(len(short_names)):
             for j in range(len(short_names)):
                 ax.text(j, i, f"{corr[i, j]:.1f}", ha="center", va="center",
-                        color="#0f172a" if abs(corr[i, j]) < 0.5 else "#ffffff", fontsize=5.5)
+                        color="#0f172a" if abs(corr[i, j]) < 0.5 else "#ffffff", fontsize=6.4)
         cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-        cbar.ax.tick_params(colors="#cbd5e1", labelsize=6)
-        ax.set_title("Subgraph Feature Correlation Heatmap (Pearson r)", color="#f8fafc", fontsize=8, pad=6)
-        return cls._save_figure(fig)
+        cbar.ax.tick_params(colors="#cbd5e1", labelsize=6.5)
+        ax.set_title("Figure 3: Subgraph Feature Correlation Heatmap (Pearson r)", color="#f8fafc", fontsize=8.8, pad=6)
+
+        pairs = []
+        for i in range(len(short_names)):
+            for j in range(i + 1, len(short_names)):
+                pairs.append((f"{short_names[i]} vs {short_names[j]}", round(float(corr[i, j]), 2)))
+        pairs_pos = sorted(pairs, key=lambda kv: kv[1], reverse=True)[:2]
+        pairs_neg = sorted(pairs, key=lambda kv: kv[1])[:2]
+        stats = {
+            "strongest_positive_correlations": [{"pair": p, "r": r} for p, r in pairs_pos],
+            "strongest_negative_correlations": [{"pair": p, "r": r} for p, r in pairs_neg],
+        }
+        return cls._figure_to_bytes(fig), stats
 
     @classmethod
-    def _render_temporal_scatter(cls, alert: Alert, report: Report) -> io.BytesIO:
-        fig, ax = cls._new_figure((4.5, 3.35))
+    def _render_temporal_scatter(cls, alert: Alert, evidence: Evidence) -> Tuple[bytes, dict]:
+        fig, ax = cls._new_figure((5.6, 3.25))
         rng = np.random.default_rng(7)
         licit_dt = rng.uniform(45, 220, size=35)
         licit_val = np.exp(rng.uniform(-2.8, 0.35, size=35))
-        ax.scatter(licit_dt, licit_val, c="#475569", alpha=0.55, s=18, label="Licit Baseline Cloud")
+        ax.scatter(licit_dt, licit_val, c="#475569", alpha=0.55, s=20, label="Licit Baseline Cloud (45-220s)")
 
-        min_edges = set(report.evidence.minimal_edges)
+        min_edges = set(evidence.minimal_edges)
         f_dt, f_val, o_dt, o_val = [], [], [], []
         for idx, e in enumerate(alert.subgraph_edges):
             dt = e.temporal_spacing_sec if e.temporal_spacing_sec > 0 else float(12 + (idx * 5) % 24)
@@ -323,25 +440,32 @@ class ForensicDossierPDFExporter:
                 o_dt.append(dt); o_val.append(max(0.05, e.value))
 
         if o_dt:
-            ax.scatter(o_dt, o_val, c="#38bdf8", s=26, alpha=0.85, label="Subgraph Context Edges")
+            ax.scatter(o_dt, o_val, c="#38bdf8", s=28, alpha=0.85, label="Subgraph Context Edges")
         if f_dt:
-            ax.scatter(f_dt, f_val, c="#ef4444", s=42, edgecolors="#ffffff", linewidths=0.6, label="Flagged Minimal Edges")
+            ax.scatter(f_dt, f_val, c="#ef4444", s=46, edgecolors="#ffffff", linewidths=0.65, label="Flagged Minimal Edges")
 
-        ax.set_xlabel("Inter-Transaction Spacing (seconds)", color="#cbd5e1", fontsize=7)
-        ax.set_ylabel("Transferred Volume (BTC)", color="#cbd5e1", fontsize=7)
-        ax.set_title("Temporal Spacing vs. Volume Anomaly Scatter", color="#f8fafc", fontsize=8, pad=6)
-        ax.tick_params(colors="#cbd5e1", labelsize=6.5)
-        ax.legend(facecolor="#0f172a", edgecolor="#334155", labelcolor="#e2e8f0", fontsize=6, loc="upper right")
+        ax.set_xlabel("Inter-Transaction Spacing (seconds)", color="#cbd5e1", fontsize=7.5)
+        ax.set_ylabel("Transferred Volume (BTC)", color="#cbd5e1", fontsize=7.5)
+        ax.set_title("Figure 4: Temporal Spacing vs. Volume Anomaly Scatter", color="#f8fafc", fontsize=8.8, pad=6)
+        ax.tick_params(colors="#cbd5e1", labelsize=7)
+        ax.legend(facecolor="#0f172a", edgecolor="#334155", labelcolor="#e2e8f0", fontsize=6.6, loc="upper right")
         for sp in ("top", "right"):
             ax.spines[sp].set_visible(False)
         for sp in ("bottom", "left"):
             ax.spines[sp].set_color("#334155")
-        return cls._save_figure(fig)
+
+        stats = {
+            "flagged_edge_count": len(f_dt),
+            "flagged_median_spacing_sec": round(float(np.median(f_dt)), 2) if f_dt else 0.0,
+            "flagged_median_btc": round(float(np.median(f_val)), 4) if f_val else 0.0,
+            "licit_baseline_spacing_range_sec": "45-220s",
+        }
+        return cls._figure_to_bytes(fig), stats
 
     @classmethod
-    def _render_historic_similarity_chart(cls, report: Report) -> io.BytesIO:
+    def _render_historic_similarity_chart(cls, evidence: Evidence) -> Tuple[bytes, dict]:
         fig, ax = cls._new_figure((8.0, 3.0))
-        matches = report.evidence.historic_case_matches
+        matches = evidence.historic_case_matches
         if matches:
             labels = [
                 f"{(m.case_name[:22].rstrip() + '...') if len(m.case_name) > 22 else m.case_name} ({m.year})"
@@ -369,7 +493,7 @@ class ForensicDossierPDFExporter:
             )
 
         fig.suptitle(
-            "OSINT Scraper Agent — Top Matched Historic Cases (Similarity vs. Escalation)",
+            "Figure 5: OSINT Scraper Agent — Matched Historic Cases (Similarity vs. Escalation)",
             color="#f8fafc", fontsize=9.2, fontweight="bold", y=0.97
         )
         ax.set_xlabel("Percentage (%)", color="#94a3b8", fontsize=7.5)
@@ -379,4 +503,18 @@ class ForensicDossierPDFExporter:
         for sp in ("bottom", "left"):
             ax.spines[sp].set_color("#334155")
         fig.subplots_adjust(left=0.31, right=0.96, top=0.76, bottom=0.18)
-        return cls._save_figure(fig, tight=False)
+
+        stats = {
+            "matched_cases": [
+                {
+                    "case_id": m.case_id,
+                    "case_name": m.case_name,
+                    "year": m.year,
+                    "similarity_index": m.similarity_index,
+                    "escalation_rate": m.escalation_rate,
+                    "source_domain": m.source_domain,
+                }
+                for m in matches
+            ]
+        }
+        return cls._figure_to_bytes(fig, tight=False), stats
